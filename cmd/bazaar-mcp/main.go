@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -96,11 +97,19 @@ func seedMenu(dbPath, menuPath string) {
 	if err != nil {
 		fatal("read menu: " + err.Error())
 	}
-	n, err := d.SeedProducts(context.Background(), rows)
+	ctx := context.Background()
+	event, err := d.GetActiveEvent(ctx)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			fatal("seed menu: belum ada event aktif")
+		}
+		fatal("seed menu: " + err.Error())
+	}
+	n, err := d.SeedProducts(ctx, event.ID, rows)
 	if err != nil {
 		fatal("seed menu: " + err.Error())
 	}
-	fmt.Printf("seeded %d products\n", n)
+	fmt.Printf("seeded %d products into %s\n", n, event.ID)
 }
 
 func readMenu(path string) ([]db.MenuRow, error) {

@@ -32,7 +32,7 @@ func seedFile(t *testing.T) string {
 	if err := d.SetActiveEvent(ctx, "BAZAR-2026-11-15"); err != nil {
 		t.Fatalf("activate event: %v", err)
 	}
-	if _, err := d.SeedProducts(ctx, []db.MenuRow{
+	if _, err := d.SeedProducts(ctx, "BAZAR-2026-11-15", []db.MenuRow{
 		{Category: "Makanan", Name: "Sate babi 5 tusuk", Price: 43000, Aliases: []string{"sate"}},
 	}); err != nil {
 		t.Fatalf("seed menu: %v", err)
@@ -61,8 +61,8 @@ func TestStdioServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(tools.Tools) != 15 {
-		t.Fatalf("tools = %d, want 15", len(tools.Tools))
+	if len(tools.Tools) != 17 {
+		t.Fatalf("tools = %d, want 17", len(tools.Tools))
 	}
 
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{

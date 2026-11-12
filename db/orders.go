@@ -457,12 +457,14 @@ func productAvailabilityQ(ctx context.Context, q querier, eventID string, produc
 	var price int64
 	var available int
 	err := q.QueryRowContext(ctx, `
-		SELECT p.name, p.price,
-		       CASE WHEN p.is_available = 1
+		SELECT p.name, ep.price,
+		       CASE WHEN p.is_available = 1 AND ep.is_available = 1
 		                 AND NOT EXISTS (SELECT 1 FROM event_sold_out es
 		                                  WHERE es.event_id = ? AND es.product_id = p.id)
 		            THEN 1 ELSE 0 END
-		  FROM products p WHERE p.id = ?`, eventID, productID).Scan(&name, &price, &available)
+		  FROM event_products ep
+		  JOIN products p ON p.id = ep.product_id
+		 WHERE ep.event_id = ? AND p.id = ?`, eventID, eventID, productID).Scan(&name, &price, &available)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", 0, false, ErrNotFound

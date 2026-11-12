@@ -11,8 +11,8 @@ import (
 	"bazaar-minggu/textnorm"
 )
 
-// SeedProducts upserts menu rows and replaces each product's aliases.
-func (d *DB) SeedProducts(ctx context.Context, rows []MenuRow) (int, error) {
+// SeedProducts upserts menu rows for one event and replaces each product's aliases.
+func (d *DB) SeedProducts(ctx context.Context, eventID string, rows []MenuRow) (int, error) {
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin seed: %w", err)
@@ -50,6 +50,17 @@ func (d *DB) SeedProducts(ctx context.Context, rows []MenuRow) (int, error) {
 			return 0, fmt.Errorf("get product id %q: %w", name, err)
 		}
 
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO event_products (event_id, product_id, price, is_available, created_at, updated_at)
+			VALUES (?, ?, ?, 1, ?, ?)
+			ON CONFLICT(event_id, product_id) DO UPDATE SET
+				price = excluded.price,
+				is_available = 1,
+				updated_at = excluded.updated_at`,
+			eventID, productID, row.Price, now, now); err != nil {
+			return 0, fmt.Errorf("upsert event product %q: %w", name, err)
+		}
+
 		if _, err := tx.ExecContext(ctx, `DELETE FROM product_aliases WHERE product_id = ?`, productID); err != nil {
 			return 0, fmt.Errorf("clear aliases %q: %w", name, err)
 		}
@@ -72,21 +83,23 @@ func (d *DB) SeedProducts(ctx context.Context, rows []MenuRow) (int, error) {
 	return len(rows), nil
 }
 
-// ListMenu returns all products with per-event availability and aliases.
+// ListMenu returns the event's listed products with per-event availability and aliases.
 func (d *DB) ListMenu(ctx context.Context, eventID string) ([]MenuProduct, error) {
 	rows, err := d.sql.QueryContext(ctx, `
-		SELECT p.id, p.name, p.category, p.price, p.is_available, p.created_at, p.updated_at,
-		       CASE WHEN p.is_available = 1
+		SELECT p.id, p.name, p.category, ep.price, ep.is_available, p.created_at, p.updated_at,
+		       CASE WHEN p.is_available = 1 AND ep.is_available = 1
 		                 AND NOT EXISTS (SELECT 1 FROM event_sold_out es
 		                                  WHERE es.event_id = ? AND es.product_id = p.id)
 		            THEN 1 ELSE 0 END AS available
-		  FROM products p
+		  FROM event_products ep
+		  JOIN products p ON p.id = ep.product_id
+		 WHERE ep.event_id = ? AND ep.is_available = 1 AND p.is_available = 1
 		 ORDER BY CASE p.category
 		            WHEN 'Makanan' THEN 0
 		            WHEN 'Cemilan' THEN 1
 		            WHEN 'Minuman' THEN 2
 		            ELSE 3 END,
-		          p.name`, eventID)
+		          p.name`, eventID, eventID)
 	if err != nil {
 		return nil, fmt.Errorf("list menu: %w", err)
 	}
@@ -165,16 +178,17 @@ func (d *DB) FindProducts(ctx context.Context, term, eventID string) ([]ProductM
 
 func (d *DB) findProducts(ctx context.Context, eventID, condition string, args ...any) ([]ProductMatch, error) {
 	query := `
-		SELECT p.id, p.name, p.category, p.price, p.is_available, p.created_at, p.updated_at,
-		       CASE WHEN p.is_available = 1
+		SELECT p.id, p.name, p.category, ep.price, ep.is_available, p.created_at, p.updated_at,
+		       CASE WHEN p.is_available = 1 AND ep.is_available = 1
 		                 AND NOT EXISTS (SELECT 1 FROM event_sold_out es
 		                                  WHERE es.event_id = ? AND es.product_id = p.id)
 		            THEN 1 ELSE 0 END AS available
-		  FROM products p
-		 WHERE ` + condition + `
+		  FROM event_products ep
+		  JOIN products p ON p.id = ep.product_id
+		 WHERE ep.event_id = ? AND ` + condition + `
 		 ORDER BY p.name
 		 LIMIT 10`
-	fullArgs := append([]any{eventID}, args...)
+	fullArgs := append([]any{eventID, eventID}, args...)
 	rows, err := d.sql.QueryContext(ctx, query, fullArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("find products: %w", err)
@@ -197,18 +211,19 @@ func (d *DB) findProducts(ctx context.Context, eventID, condition string, args .
 	return out, nil
 }
 
-// GetMenuProduct returns one product with per-event availability and aliases.
+// GetMenuProduct returns one product from the event's menu, including unlisted rows.
 func (d *DB) GetMenuProduct(ctx context.Context, eventID string, productID int64) (*MenuProduct, error) {
 	var p MenuProduct
 	var available int
 	err := d.sql.QueryRowContext(ctx, `
-		SELECT p.id, p.name, p.category, p.price, p.is_available, p.created_at, p.updated_at,
-		       CASE WHEN p.is_available = 1
+		SELECT p.id, p.name, p.category, ep.price, ep.is_available, p.created_at, p.updated_at,
+		       CASE WHEN p.is_available = 1 AND ep.is_available = 1
 		                 AND NOT EXISTS (SELECT 1 FROM event_sold_out es
 		                                  WHERE es.event_id = ? AND es.product_id = p.id)
 		            THEN 1 ELSE 0 END AS available
-		  FROM products p
-		 WHERE p.id = ?`, eventID, productID).
+		  FROM event_products ep
+		  JOIN products p ON p.id = ep.product_id
+		 WHERE ep.event_id = ? AND p.id = ?`, eventID, eventID, productID).
 		Scan(&p.ID, &p.Name, &p.Category, &p.Price, &p.IsAvailable, &p.CreatedAt, &p.UpdatedAt, &available)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

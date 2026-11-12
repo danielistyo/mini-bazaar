@@ -8,13 +8,33 @@ import (
 )
 
 // CreateEvent inserts an event. It does not activate it.
+// The new event copies the active event's listed menu, including prices.
 func (d *DB) CreateEvent(ctx context.Context, e Event) error {
-	_, err := d.sql.ExecContext(ctx,
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin create event: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO bazaar_events (id, name, event_date, cutoff_at, is_active, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Name, e.EventDate, nullableInt(e.CutoffAt), boolToInt(e.IsActive), e.CreatedAt)
-	if err != nil {
+		e.ID, e.Name, e.EventDate, nullableInt(e.CutoffAt), boolToInt(e.IsActive), e.CreatedAt); err != nil {
 		return fmt.Errorf("create event: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO event_products (event_id, product_id, price, is_available, created_at, updated_at)
+		SELECT ?, ep.product_id, ep.price, 1, ?, ?
+		  FROM event_products ep
+		 WHERE ep.event_id = (SELECT id FROM bazaar_events WHERE is_active = 1)
+		   AND ep.is_available = 1`,
+		e.ID, e.CreatedAt, e.CreatedAt); err != nil {
+		return fmt.Errorf("copy event menu: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit create event: %w", err)
 	}
 	return nil
 }

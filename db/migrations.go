@@ -14,7 +14,7 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("read schema_version: %w", err)
 	}
 
-	migrations := []string{migrationV1, migrationV2}
+	migrations := []string{migrationV1, migrationV2, migrationV3}
 	for i, m := range migrations {
 		v := i + 1
 		if v <= version {
@@ -144,4 +144,22 @@ CREATE INDEX idx_drafts_order ON drafts(order_id);
 const migrationV2 = `
 ALTER TABLE drafts ADD COLUMN short_code TEXT;
 CREATE UNIQUE INDEX idx_drafts_short_code ON drafts(short_code);
+`
+
+const migrationV3 = `
+CREATE TABLE event_products (
+    event_id TEXT NOT NULL REFERENCES bazaar_events(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    price INTEGER NOT NULL CHECK(price >= 0),
+    is_available INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (event_id, product_id)
+);
+CREATE INDEX idx_event_products_product ON event_products(product_id);
+
+INSERT INTO event_products (event_id, product_id, price, is_available, created_at, updated_at)
+SELECT e.id, p.id, p.price, p.is_available, p.created_at, p.updated_at
+  FROM bazaar_events e
+ CROSS JOIN products p;
 `

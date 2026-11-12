@@ -35,7 +35,7 @@ func setup(t *testing.T) (*db.DB, string) {
 	if err := d.SetActiveEvent(ctx, eventID); err != nil {
 		t.Fatalf("activate event: %v", err)
 	}
-	if _, err := d.SeedProducts(ctx, []db.MenuRow{
+	if _, err := d.SeedProducts(ctx, eventID, []db.MenuRow{
 		{Category: "Makanan", Name: "Sate babi 5 tusuk", Price: 43000, Aliases: []string{"sate"}},
 	}); err != nil {
 		t.Fatalf("seed menu: %v", err)
@@ -90,8 +90,8 @@ func TestToolsListAndOrderFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(tools.Tools) != 15 {
-		t.Fatalf("tools = %d, want 15", len(tools.Tools))
+	if len(tools.Tools) != 17 {
+		t.Fatalf("tools = %d, want 17", len(tools.Tools))
 	}
 
 	events := call(t, session, "list_events", map[string]any{})
@@ -144,6 +144,80 @@ func TestToolsListAndOrderFlow(t *testing.T) {
 	summaryObj := summaryData["summary"].(map[string]any)
 	if summaryObj["omzet"].(float64) != 43000 {
 		t.Fatalf("omzet = %v, want 43000", summaryObj["omzet"])
+	}
+}
+
+func TestMenuAdminTools(t *testing.T) {
+	d, _ := setup(t)
+	session := connect(t, orders.New(d))
+
+	added := call(t, session, "upsert_product", map[string]any{
+		"name":     "Lauk ayam mboksiah",
+		"category": "Makanan",
+		"price":    20000,
+		"aliases":  []any{"lauk mboksiah"},
+	})
+	if added["ok"] != true {
+		t.Fatalf("upsert_product add = %+v", added)
+	}
+	product := added["data"].(map[string]any)["product"].(map[string]any)
+	productID := int64(product["id"].(float64))
+	if product["price"].(float64) != 20000 {
+		t.Fatalf("added price = %v", product["price"])
+	}
+	if formatted, _ := added["formatted"].(string); !strings.Contains(formatted, "ditambahkan") {
+		t.Fatalf("add formatted = %q", formatted)
+	}
+
+	updated := call(t, session, "upsert_product", map[string]any{
+		"product_id": productID,
+		"name":       "Lauk ayam mboksiah",
+		"category":   "Makanan",
+		"price":      21000,
+	})
+	updatedProduct := updated["data"].(map[string]any)["product"].(map[string]any)
+	if updatedProduct["price"].(float64) != 21000 {
+		t.Fatalf("updated price = %v", updatedProduct["price"])
+	}
+
+	aliasMatch := call(t, session, "find_product", map[string]any{"search_term": "lauk mboksiah"})
+	aliasProducts := aliasMatch["data"].(map[string]any)["products"].([]any)
+	if len(aliasProducts) != 1 {
+		t.Fatalf("alias lookup = %+v", aliasProducts)
+	}
+
+	disabled := call(t, session, "set_product_enabled", map[string]any{"product_id": productID, "enabled": false})
+	if disabled["ok"] != true {
+		t.Fatalf("set_product_enabled = %+v", disabled)
+	}
+	disabledProduct := disabled["data"].(map[string]any)["product"].(map[string]any)
+	if disabledProduct["is_available"] != false {
+		t.Fatalf("disabled product = %+v", disabledProduct)
+	}
+
+	menu := call(t, session, "get_menu", map[string]any{})
+	for _, p := range menu["data"].(map[string]any)["products"].([]any) {
+		if int64(p.(map[string]any)["id"].(float64)) == productID {
+			t.Fatal("disabled product is still in get_menu")
+		}
+	}
+
+	conflict := call(t, session, "upsert_product", map[string]any{
+		"name":     "Sate babi 5 tusuk",
+		"category": "Makanan",
+		"price":    43000,
+	})
+	if conflict["ok"] != false || conflict["code"] != "conflict" {
+		t.Fatalf("duplicate upsert = %+v", conflict)
+	}
+
+	invalid := call(t, session, "upsert_product", map[string]any{
+		"name":     "Produk Test",
+		"category": "Makanan",
+		"price":    -1,
+	})
+	if invalid["ok"] != false || invalid["code"] != "invalid_input" {
+		t.Fatalf("negative price = %+v", invalid)
 	}
 }
 

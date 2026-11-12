@@ -41,7 +41,7 @@ func setup(t *testing.T) (*orders.Service, *db.DB) {
 		{Category: "Cemilan", Name: "Kue lumpur bakar Sidoarjo rasa original (5 pcs)", Price: 20000, Aliases: []string{"kue lumpur ori"}},
 		{Category: "Minuman", Name: "Cincau Station Orenji", Price: 12000, Aliases: []string{"orenji", "orange cincau"}},
 	}
-	if _, err := d.SeedProducts(ctx, rows); err != nil {
+	if _, err := d.SeedProducts(ctx, eventID, rows); err != nil {
 		t.Fatalf("seed menu: %v", err)
 	}
 	return orders.New(d), d

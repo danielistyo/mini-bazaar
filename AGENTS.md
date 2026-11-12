@@ -12,7 +12,7 @@ Bazar KPKM Order Assistant: a WhatsApp bot that records food and drink orders fo
 - **A local Go MCP server** owns the order logic and exposes tools over stdio.
 - **SQLite** is the single source of truth for events, customers, orders, payments, and history.
 
-Status: live on 2026-11-12. Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp Web is paired as `<bot-number>` and patched to drop PM-WA commands. DMs are on; allowed groups are `Pengurus KPKM Awet Muda` and `Sie bazzar`. Target: **Bazar KPKM, Sunday 15 November 2026**. Menu: 25 lines, 28 SKUs.
+Status: live on 2026-11-12. Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp Web is paired as `<bot-number>` and patched to drop PM-WA commands. DMs are on; allowed groups are `Pengurus KPKM Awet Muda` and `Sie bazzar`. Target: **Bazar KPKM, Sunday 15 November 2026**. Menu: per event, backed by a shared catalog; the live event has 29 products.
 
 ## Hard rules
 
@@ -94,18 +94,40 @@ Tests sit next to the package they test (`db/db_test.go`, `orders/draft_test.go`
 
 - Initial event: code `BAZAR-2026-11-15`, name "Bazar KPKM", date `2026-11-15` (Sunday), cutoff `2026-11-14T12:00:00+07:00` (Saturday noon). Cutoff is displayed only.
 - Exactly one Active Event at a time. New orders default to it.
-- `create_event` creates an inactive event. `set_active_event` switches the active event; the bot announces the new one.
+- `create_event` creates an inactive event and copies the active event's listed menu at the active event's prices. `set_active_event` switches the active event; the bot announces the new one.
 - Drafts store their event at creation, so switching events cannot move an in-flight draft.
 - Test events are normal events. Their orders never appear in another event's summary.
 
 ### Menu
 
-- Products are global. Prices are integer Rupiah.
-- Seed data lives in `menu.csv` (`category,name,price,aliases`). The 25 menu lines become 28 SKUs because Cincau Station is split into four flavors: Gurin, Orenji, Original, Honey Lime (Rp12.000 each), so a flavor can sell out independently.
-- The price is snapshotted when a Draft is created and carried into the confirmed Order. Later price changes never alter existing Orders.
-- Aliases are suggestions. `find_product` returns candidates; the bot asks when more than one matches.
-- Sold-out is per Event (`event_sold_out`), not global. `products.is_available` is a global hard-disable used only for seeding and operations, never by chat.
-- `commit_draft` refuses if an item is sold out at commit time. The team removes it and previews again.
+- Each event has its own menu. Products belong to a shared catalog (name, category, aliases); price and listing live in `event_products` per event.
+- Seed data lives in `menu.csv` (`category,name,price,aliases`). `make seed-menu` applies the CSV to the Active Event, not to every event. Cincau Station is split into four flavors: Gurin, Orenji, Original, Honey Lime (Rp12.000 each), so a flavor can sell out independently.
+- The live event has 29 products, including Lauk ayam mboksiah (Rp20.000).
+- The price is snapshotted when a Draft is created and carried into the confirmed Order. Later price changes, even in the same event, never alter existing Orders.
+- Aliases are suggestions shared across events. `find_product` returns candidates from the event's menu only; the bot asks when more than one matches.
+- Sold-out is temporary and per Event (`event_sold_out`). Use `set_product_available`.
+- `set_product_enabled` lists or removes a product on one event's menu. Removing keeps the row and its price, hides it from `get_menu`, marks it unavailable in `find_product`, and makes new orders fail with `sold_out`. Other events are untouched. History is never deleted.
+- `upsert_product` adds a catalog product and lists it on one event, or updates the shared name, category, and aliases plus that event's price and listing. Name clash returns `conflict` with the existing id. Menu admin, organizer DM only.
+- `products.is_available` is a dormant global kill used only by operations; chat tools never set it.
+- `commit_draft` refuses if an item is removed or sold out at commit time. The team fixes the menu and previews again.
+
+#### Menu lifecycle (confirmed behavior)
+
+1. `create_event` copies the active event's **listed** menu at the active event's prices. Removed products are not copied. Temporary sold-out is not copied; the item starts available in the new event. If no event is active, the new menu starts empty.
+2. Migration V3 backfills every existing event with every catalog product at the catalog price. Old events keep a full menu until items are removed from them.
+3. `make seed-menu` applies `menu.csv` to the **Active Event only**. Check the active event first. Re-seeding overwrites that event's prices with the CSV, re-enables rows present in the CSV, and never deletes products missing from the CSV.
+4. Shared across events: product name, category, aliases, and the catalog default price. Per event: charged price, listing, and temporary sold-out.
+5. `upsert_product` updates the catalog default price, but the charged price always comes from `event_products`. The default only matters when a catalog product is attached to an event that never had it.
+6. `products.is_available` is a global operations kill checked by every menu query. No chat tool sets it, and `set_product_enabled` cannot override it; clearing it requires SQL.
+
+#### Menu operations
+
+- Different menu for a new event: create it, activate it, then add, remove, or reprice. It starts as a copy of the active menu.
+- Seed from CSV: activate the target event first, then `make seed-menu`.
+- Rename or re-alias: global, affects every event. Keep the canonical name and add aliases when possible.
+- Hide from one event: `set_product_enabled(enabled=false)`. Temporary habis: `set_product_available(false)`.
+- Catalog name clash on add: `upsert_product` returns `conflict` with the existing id. Ask, then call again with that `product_id` to attach the existing catalog product to the event.
+- Hide everywhere in an emergency: SQL on `products.is_available`, never a chat command.
 
 ### Customers
 
@@ -142,21 +164,29 @@ Full DDL lives in the code. Tables and key constraints:
 - `bazaar_events(id TEXT PK, name TEXT, event_date TEXT, cutoff_at INTEGER NULL, is_active INTEGER, created_at INTEGER)`
   - partial unique index on `is_active = 1`, so only one active event exists.
 - `products(id INTEGER PK, name TEXT UNIQUE, category TEXT NOT NULL, price INTEGER CHECK(price >= 0), is_available INTEGER DEFAULT 1, created_at INTEGER, updated_at INTEGER)`
+  - the shared catalog. `price` is the default used when a product is added to an event without an explicit price.
+- `event_products(event_id FK, product_id FK, price INTEGER CHECK(price >= 0), is_available INTEGER DEFAULT 1, created_at INTEGER, updated_at INTEGER, PRIMARY KEY(event_id, product_id))`
+  - the event's menu and prices. `is_available = 0` means removed from that event, keeping history and price.
 - `product_aliases(id INTEGER PK, product_id FK, alias TEXT, normalized_alias TEXT, UNIQUE(product_id, alias))`
 - `event_sold_out(event_id FK, product_id FK, created_at INTEGER, PRIMARY KEY(event_id, product_id))`
 - `customers(id INTEGER PK, display_name TEXT, normalized_name TEXT UNIQUE, created_at INTEGER)`
 - `orders(id INTEGER PK, event_id FK, customer_id FK, order_number INTEGER, status TEXT CHECK(status IN ('confirmed','cancelled')), is_paid INTEGER DEFAULT 0, paid_at INTEGER NULL, notes TEXT NULL, created_at INTEGER, updated_at INTEGER, cancelled_at INTEGER NULL, UNIQUE(event_id, order_number))`
   - partial unique index on `(event_id, customer_id) WHERE status = 'confirmed'`.
-- `order_items(id INTEGER PK, order_id FK, product_id FK, quantity INTEGER CHECK(quantity > 0), unit_price INTEGER CHECK(unit_price >= 0), note TEXT NULL)`
+- `order_items(id INTEGER PK, order_id FK, product_id FK, product_name TEXT, quantity INTEGER CHECK(quantity > 0), unit_price INTEGER CHECK(unit_price >= 0), note TEXT NULL)`
+  - `product_name` and `unit_price` are snapshots; catalog and event price edits never rewrite them.
 - `order_audit_logs(id INTEGER PK, order_id FK, action TEXT, details TEXT, created_at INTEGER)`
 - `drafts(id TEXT PK, short_code TEXT UNIQUE, kind TEXT CHECK(kind IN ('create','edit','cancel')), event_id FK, order_id FK NULL, customer_id FK NULL, customer_name TEXT NULL, payload TEXT, total INTEGER NULL, status TEXT CHECK(status IN ('pending','committed','expired')), expires_at INTEGER, created_at INTEGER, committed_at INTEGER NULL)`
 
 All `*_at` columns are Unix seconds (`int64`). `event_date` is a WIB calendar date (`YYYY-MM-DD`).
 
-Two additions to the original seven-table design:
+Schema versions: V1 initial, V2 draft `short_code`, V3 `event_products` with a backfill that copies every existing product into every existing event at the catalog price.
+
+Additions to the original design:
 
 - `drafts`: two-phase writes must survive restarts.
-- `event_sold_out`: sold-out is per event, not global.
+- `event_sold_out`: temporary sold-out is per event.
+- `event_products`: each event has its own menu and prices.
+- `order_items.product_name`: keep the name sold even if the catalog is renamed.
 
 No message IDs or JIDs are stored. Duplicate delivery is handled by draft idempotency plus the 30-minute expiry.
 
@@ -167,11 +197,13 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 | Tool | Inputs | Behavior |
 | --- | --- | --- |
 | `list_events` | none | All events with active flag, confirmed order count, Omzet. |
-| `create_event` | `name`, `event_date` (`YYYY-MM-DD`), `cutoff_at?`, `code?` | Creates an inactive event. Default code `EVENT-<date>`. Rejects duplicate codes and invalid dates. |
+| `create_event` | `name`, `event_date` (`YYYY-MM-DD`), `cutoff_at?`, `code?` | Creates an inactive event and copies the active event's listed menu and prices. Default code `EVENT-<date>`. Rejects duplicate codes and invalid dates. |
 | `set_active_event` | `event_id` | Activates one event and deactivates the others. |
-| `get_menu` | `event_id?` | Products with category, price, per-event availability, and aliases. Defaults to Active Event. |
-| `find_product` | `search_term`, `event_id?` | Candidates with id, canonical name, price, availability, matched alias. Empty means not found. |
+| `get_menu` | `event_id?` | The event's listed products with category, price, availability, and aliases. Defaults to Active Event. |
+| `find_product` | `search_term`, `event_id?` | Candidates from the event's menu with id, canonical name, price, availability, matched alias. Empty means not found. |
 | `set_product_available` | `product_id`, `available`, `event_id?` | Toggles per-event sold-out. Returns the new state. |
+| `upsert_product` | `event_id?`, `product_id?`, `name`, `category`, `price`, `aliases?`, `available?` | Adds a catalog product and lists it on one event, or updates the shared name, category, and aliases plus that event's price and listing. Name clash returns `conflict` with the existing id. Menu admin, organizer DM only. |
+| `set_product_enabled` | `event_id?`, `product_id`, `enabled` | Lists or removes a product on one event's menu. Other events and order history stay. Enabling a catalog product not yet listed adds it at the catalog price. For temporary sold-out use `set_product_available`. |
 | `find_customer` | `name` | Exact and near matches with display name and order count. |
 | `create_order_draft` | `customer_name`, `customer_id?`, `items[]`, `event_id?`, `notes?` | Creates a pending create draft. Refuses when the customer already has a confirmed order (`existing_order`). Returns preview and `short_code`. |
 | `create_edit_draft` | `order_id`, `items[]`, `notes?` | Full replacement. Refuses cancelled orders. Returns before/after preview and `short_code`. |
@@ -218,6 +250,17 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 - **Paid:** "Bu Ratna sudah bayar" calls `mark_order_paid(order, true)`. Reply "✅ #BK-001 ditandai lunas". Reversible with `paid = false`.
 - **Summary:** call `get_summary` and relay the `formatted` text. Never compute totals. Each customer block is a bold `*#BK-001 — Customer*` header, then `Rp... · Lunas/Belum`, then items, then a blank line.
 
+### Menu admin (organizer DM only)
+
+1. Menu admin always targets one event: the named event, otherwise the active event. The bot names the event in the preview.
+2. "tambah lauk ayam mboksiah 20rb" creates a catalog product and lists it on that event. "ubah harga sate jadi 45rb" updates that event only. Renaming or re-aliasing changes the shared catalog, so warn that other events are affected.
+3. The bot shows the intended change: event, name, category, price, aliases, and `Balas OK <4 digit>`.
+4. After `OK <code>`, call `upsert_product` (add or update) or `set_product_enabled` (list/remove) once. These tools write immediately; the conversational preview plus explicit OK is the guard.
+5. Price changes affect new drafts only. Existing orders keep their snapshot.
+6. "hapus X" means `set_product_enabled(enabled=false)` for that event, never a delete. Temporary sold-out stays `set_product_available`.
+7. A new event copies the active event's listed menu at its prices. The bot can edit that copy without touching the old event.
+8. Menu admin is prompted as DM-only. MCP tools cannot verify the sender, so this is a UX guard, not a security boundary.
+
 ## WhatsApp and ZeroClaw configuration
 
 - Channel: WhatsApp Web build, persistent `session_path` under `data/wa-session`.
@@ -225,8 +268,8 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 - DM: `dm_policy = "all"`. The bot shares the PM-WA WhatsApp account (`<bot-number>`), so the channel drops PM-WA command prefixes before the agent (see PM-WA coexistence below).
 - No sender allowlist inside the allowed groups: every member may operate the bot. No JID storage in SQLite.
 - Model: OpenCode Go custom OpenAI-compatible provider (`custom.bazaar`), `deepseek-v4.1-flash` (DeepSeek V4.1 Flash 1017). Base URL per Go docs (`https://opencode.ai/inference/go/openai/v1`). API key from the environment or secret store, never in the repo.
-- Provider entry: `[providers.models.custom.bazaar]` in `zeroclaw/config.toml` (schema v3) with `uri`, `model`, `native_tools = true`, and `extra_headers.x-opencode-session`. Native tools reduce the system prompt from ~72k to ~7k chars and expose 15 function schemas.
-- Risk profile `bazaar`: `level = "full"`, `auto_approve = ["*"]`, and `allowed_tools` pinned to the 15 `bazaar__*` tools. This removes shell, filesystem, and every other built-in from the model.
+- Provider entry: `[providers.models.custom.bazaar]` in `zeroclaw/config.toml` (schema v3) with `uri`, `model`, `native_tools = true`, and `extra_headers.x-opencode-session`. Native tools reduce the system prompt from ~72k to ~7k chars and expose 17 function schemas.
+- Risk profile `bazaar`: `level = "full"`, `auto_approve = ["*"]`, and `allowed_tools` pinned to the 17 `bazaar__*` tools. This removes shell, filesystem, and every other built-in from the model.
 - MCP: stdio server spawned by ZeroClaw. Command `/home/<user>/bazaar-minggu/bin/bazaar-mcp`, args `["serve", "--db", "/home/<user>/bazaar-minggu/data/orders.db"]`. Grant the server through `mcp_bundles`.
 - Agent prompt: `prompts/system.md`, copied to `agent-workspace/IDENTITY.md`, encodes the Hard Rules, the confirmation protocol, ambiguity rules, and "relay formatted text, never calculate".
 
@@ -331,7 +374,7 @@ Backup:
 - `make lint` runs `go vet ./...`.
 - `make test` runs `go test ./...`.
 - `make init` creates the schema and seeds `BAZAR-2026-11-15`.
-- `make seed-menu MENU=menu.csv` seeds products and aliases.
+- `make seed-menu MENU=menu.csv` seeds products and aliases into the Active Event.
 - `make run` runs `BAZAAR_DB=data/orders.db ./bin/bazaar-mcp serve`.
 
 Before finishing any change: lint, unit tests, and integration tests. Report the actual result of each check. Manual WhatsApp checks must be labeled manual, never implied to pass.
@@ -349,8 +392,9 @@ Unit tests in external `_test` packages (table-driven where there are multiple c
 - Cancel soft delete, excluded from Omzet, cancelled-paid separate.
 - Paid and unpaid totals; summary per customer and per product.
 - Event activation, only one active; draft event isolation.
+- Per-event menu: a product added to one event is absent from another; the same product can have different prices; new events copy the active event's listed menu; removing from one event leaves the other and order history intact.
 - Per-event sold-out; commit refuses sold-out; other event unaffected.
-- Price snapshot at draft creation; later price changes do not alter confirmed orders.
+- Price snapshot at draft creation; later price changes, in the same or another event, do not alter confirmed orders.
 
 Integration tests (temp SQLite via `t.TempDir()`):
 

@@ -47,6 +47,22 @@ type setProductAvailableInput struct {
 	EventID   string `json:"event_id,omitempty" jsonschema:"event code; defaults to the active event"`
 }
 
+type upsertProductInput struct {
+	EventID   string    `json:"event_id,omitempty" jsonschema:"event code; defaults to the active event"`
+	ProductID int64     `json:"product_id,omitempty" jsonschema:"existing product id for an update; omit to add a new product"`
+	Name      string    `json:"name" jsonschema:"canonical product name"`
+	Category  string    `json:"category" jsonschema:"Makanan, Cemilan, or Minuman"`
+	Price     int64     `json:"price" jsonschema:"integer Rupiah price for this event"`
+	Aliases   *[]string `json:"aliases,omitempty" jsonschema:"optional aliases; omit on update to keep them, [] to clear"`
+	Available *bool     `json:"available,omitempty" jsonschema:"optional listing state for this event; true by default when adding"`
+}
+
+type setProductEnabledInput struct {
+	EventID   string `json:"event_id,omitempty" jsonschema:"event code; defaults to the active event"`
+	ProductID int64  `json:"product_id" jsonschema:"product id"`
+	Enabled   bool   `json:"enabled" jsonschema:"true to list on this event's menu, false to remove it; other events and order history stay"`
+}
+
 type findCustomerInput struct {
 	Name string `json:"name" jsonschema:"customer name as spoken by the user"`
 }
@@ -147,6 +163,19 @@ func New(svc *orders.Service) *mcp.Server {
 	}, h.setProductAvailable)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "upsert_product",
+		Description: "Add or update a product on one event's menu. Only the organizer should use this, preferably in DM. " +
+			"Pass product_id to update; omit it to add. Prices and listing are per event; the catalog name, category, and aliases are shared. " +
+			"Show a preview and wait for OK before calling. Existing orders keep their snapshot.",
+	}, h.upsertProduct)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "set_product_enabled",
+		Description: "List or remove a product on one event's menu. Other events and order history stay. " +
+			"For temporary sold-out use set_product_available instead.",
+	}, h.setProductEnabled)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_customer",
 		Description: "Find existing customers by name, including near matches such as Bu Susi vs Susi. Ask the user before reusing or creating a customer.",
 	}, h.findCustomer)
@@ -239,6 +268,22 @@ func (h *handlers) findProduct(ctx context.Context, _ *mcp.CallToolRequest, in f
 
 func (h *handlers) setProductAvailable(ctx context.Context, _ *mcp.CallToolRequest, in setProductAvailableInput) (*mcp.CallToolResult, ToolOutput, error) {
 	res, err := h.svc.SetProductAvailable(ctx, in.ProductID, in.Available, in.EventID)
+	if err != nil {
+		return nil, fail(err), nil
+	}
+	return nil, ok(res.Formatted, res), nil
+}
+
+func (h *handlers) upsertProduct(ctx context.Context, _ *mcp.CallToolRequest, in upsertProductInput) (*mcp.CallToolResult, ToolOutput, error) {
+	res, err := h.svc.UpsertProduct(ctx, in.EventID, in.ProductID, in.Name, in.Category, in.Price, in.Aliases, in.Available)
+	if err != nil {
+		return nil, fail(err), nil
+	}
+	return nil, ok(res.Formatted, res), nil
+}
+
+func (h *handlers) setProductEnabled(ctx context.Context, _ *mcp.CallToolRequest, in setProductEnabledInput) (*mcp.CallToolResult, ToolOutput, error) {
+	res, err := h.svc.SetProductEnabled(ctx, in.EventID, in.ProductID, in.Enabled)
 	if err != nil {
 		return nil, fail(err), nil
 	}

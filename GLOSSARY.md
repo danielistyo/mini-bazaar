@@ -23,15 +23,15 @@ _Avoid_: Deadline, closing time
 ## Menu
 
 **Menu**:
-The set of products and prices offered for an event. The menu is global, and prices stay fixed during the bazaar.
-_Avoid_: Catalog, price list
+The set of products and prices offered for one event. Each event has its own menu and prices; a shared product catalog supplies names, categories, and aliases.
+_Avoid_: Global menu, one price list for all events
 
 **Category**:
 A menu grouping — Makanan, Cemilan, Minuman — used for display.
 _Avoid_: Section, group
 
 **Product**:
-A sellable item with one canonical name and one integer Rupiah price.
+A sellable catalog item with one canonical name, a category, and a default integer Rupiah price. The price actually charged comes from the event's menu.
 _Avoid_: Item (use Order Item), SKU, dish
 
 **Flavor**:
