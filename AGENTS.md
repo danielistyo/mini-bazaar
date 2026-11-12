@@ -2,6 +2,8 @@
 
 Instructions for AI agents working in this repository.
 
+Deployment values (bot number, group JIDs, host, ssh user, checkout path) are replaced by placeholders such as `<bot-number>`. If `AGENTS.local.md` exists, read it for the real values; it is gitignored.
+
 ## What this is
 
 Bazar KPKM Order Assistant: a WhatsApp bot that records food and drink orders for a bazaar team, lets the team edit or cancel them, tracks payment, and produces summaries.
