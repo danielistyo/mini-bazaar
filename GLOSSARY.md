@@ -1,15 +1,71 @@
 # Bazar KPKM Order Assistant
 
-The domain of a WhatsApp order assistant for the Bazar KPKM team: bazaar events, a menu, customers, confirmed orders, payments, and summaries.
+The domain of a chat assistant that lets several food businesses record orders taken in bazaar groups: stores, events, a menu, customers, confirmed orders, payments, and summaries. It began as one WhatsApp bot for one team; it now serves many stores over more than one channel.
+
+## Stores
+
+**Store**:
+One business that sells food, with its own events, menu, and customers, operable from several channels. Nothing in one store is visible to another.
+_Avoid_: Tenant, account, organisation, team, seller
+
+**Store Code**:
+The short uppercase identifier a store is addressed by, such as `KPKM`. It never changes once the store exists.
+_Avoid_: Slug, handle, username, store id
+
+**Suspended Store**:
+A store that has been switched off. Its data and history remain, but every request from its members is refused until it is switched back on.
+_Avoid_: Deleted store, banned store, archived store
+
+## Access
+
+**Channel**:
+The app a message arrives on, such as WhatsApp or Telegram. A store can be operated from more than one channel, and the data is the same on all of them.
+_Avoid_: Platform, provider, integration
+
+**Account**:
+One human, the same person on every channel they use. An account belongs to one store at a time.
+_Avoid_: User, login, profile, member
+
+**Channel Identity**:
+How one account or one group appears on one channel: a WhatsApp number, a Telegram user id. A human has one per channel, and they count as the same person only once that link has been proven.
+_Avoid_: JID, phone number, external id, handle
+
+**Store Member**:
+An account that may operate a store, with the role given to it there. Most people who touch a store are never members.
+_Avoid_: Team member, admin, operator, user
+
+**Group Binding**:
+A chat group registered to a store, so that everyone in the group acts with the role written on the binding. Its members need no account of their own.
+_Avoid_: Group access, chat registration, group owner
+
+**Role**:
+How much of a store someone may operate. Organizers manage the store itself; staff take and settle orders.
+_Avoid_: Permission, access level, privilege
+
+**Organizer**:
+The role allowed to change the store: its menu, its events, and who else has access.
+_Avoid_: Owner, admin, superuser
+
+**Staff**:
+The role allowed to record, edit, cancel, and settle orders, but not to change the menu, the events, or access.
+_Avoid_: Member, operator, user
+
+**Claim Code**:
+A short one-time code that moves trust from one place to another: from an organizer's direct message into a group, or from one channel to another. Whoever can read the message holds the code.
+_Avoid_: Invite code, token, OTP, password
+
+**Scope**:
+The store, role, and caller that a single incoming message acts under. It is settled before the message reaches the assistant, and it bounds everything the assistant may do in that reply.
+_Avoid_: Context, session, tenant filter
 
 ## Events
 
 **Event**:
-One bazaar occurrence with a date and an optional order cutoff. Orders never mix between events.
+One bazaar occurrence with a date and an optional order cutoff. It belongs to exactly one store, and orders never mix between events or between stores.
 _Avoid_: Bazaar (as a data term), session
 
 **Active Event**:
-The event that new orders default to when the message does not name one. Exactly one event is active at a time.
+The event that new orders default to when the message does not name one. Exactly one event per store is active at a time.
 _Avoid_: Current bazaar, selected event
 
 **Test Event**:
@@ -23,7 +79,7 @@ _Avoid_: Deadline, closing time
 ## Menu
 
 **Menu**:
-The set of products and prices offered for one event. Each event has its own menu and prices; a shared product catalog supplies names, categories, and aliases.
+The set of products and prices offered for one event. Each event has its own menu and prices; a product catalog that belongs to the store supplies names, categories, and aliases.
 _Avoid_: Global menu, one price list for all events
 
 **Category**:
@@ -31,7 +87,7 @@ A menu grouping — Makanan, Cemilan, Minuman — used for display.
 _Avoid_: Section, group
 
 **Product**:
-A sellable catalog item with one canonical name, a category, and a default integer Rupiah price. The price actually charged comes from the event's menu.
+A sellable catalog item belonging to one store, with one canonical name, a category, and a default integer Rupiah price. The price actually charged comes from the event's menu.
 _Avoid_: Item (use Order Item), SKU, dish
 
 **Flavor**:
@@ -39,7 +95,7 @@ A choice within a drink line, such as Gurin, Orenji, Original, or Honey Lime.
 _Avoid_: Variant, type
 
 **Alias**:
-An alternative name, abbreviation, or common typo that points to a product. Aliases are suggestions; an ambiguous alias is confirmed with the user.
+An alternative name, abbreviation, or common typo that points to a product within its store. Aliases are suggestions; an ambiguous alias is confirmed with the user.
 _Avoid_: Synonym, nickname
 
 **Sold Out**:
@@ -49,15 +105,11 @@ _Avoid_: Unavailable (global), out of stock
 ## People and roles
 
 **Customer**:
-The person an order is for, identified by name only. Not the team member who relays the order, and not a WhatsApp account.
+The person an order is for, identified by name only. Not the store member who relays the order, and never an account: a customer does not sign in.
 _Avoid_: Client, buyer, user, account
 
-**Team Member**:
-A person in the bazaar team group who relays orders and operates the assistant. A team member is not a customer unless the food is for them.
-_Avoid_: Admin, operator, user
-
 **Relayed Order**:
-An order message that a team member forwards or posts on a customer's behalf. It must name the customer.
+An order message that a store member forwards or posts on a customer's behalf. It must name the customer.
 _Avoid_: Forwarded message (the WhatsApp artifact)
 
 **Customer Name Normalization**:
@@ -91,8 +143,8 @@ A proposed create, edit, or cancel shown before it is applied. It expires and is
 _Avoid_: Preview, pending order
 
 **Confirmation**:
-The explicit `CONFIRM <draft id>` reply that authorizes committing a draft. A plain "yes" is not confirmation.
-_Avoid_: Approval, OK
+The explicit `OK <4-digit code>` reply that authorizes committing a draft. The code belongs to one draft in one store and dies with it. A plain "yes" is not confirmation.
+_Avoid_: Approval, yes, agreement
 
 **Edit**:
 A draft that changes an order's items or notes after confirmation. Editing a paid order resets it to unpaid.
@@ -105,7 +157,7 @@ _Avoid_: Delete, removal
 ## Money and reporting
 
 **Paid / Unpaid**:
-Whether the team has received cash for a confirmed order. Payment is separate from order status; a cancelled order can still have been paid, which needs a manual refund.
+Whether the store has received cash for a confirmed order. Payment is separate from order status; a cancelled order can still have been paid, which needs a manual refund.
 _Avoid_: Settled, completed
 
 **Omzet**:
@@ -121,5 +173,5 @@ A report from the order records with per-customer orders, per-product quantities
 _Avoid_: Report, recap
 
 **Audit Log**:
-The append-only record of order actions: created, edited, cancelled, paid, unpaid. It stores no WhatsApp identities.
+The append-only record of order actions: created, edited, cancelled, paid, unpaid. It records which account acted and never a channel identity.
 _Avoid_: History, changelog
