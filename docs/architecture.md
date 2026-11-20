@@ -87,8 +87,8 @@ flowchart TB
 | SQL, store predicates | `db/` | every statement takes a store |
 | User-visible text | `format/` | never receives a channel identity |
 
-Test scenarios that drive this system over WhatsApp Web:
-[`docs/testing/e2e-whatsapp.md`](testing/e2e-whatsapp.md).
+Test scenarios that drive this system over WhatsApp Web against the production
+deployment: [`docs/testing/e2e-whatsapp.md`](testing/e2e-whatsapp.md).
 
 ## Request path
 
