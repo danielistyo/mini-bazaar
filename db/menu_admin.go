@@ -65,8 +65,8 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 	if in.ProductID == 0 {
 		var conflictID int64
 		err := tx.QueryRowContext(ctx,
-			`SELECT id FROM products WHERE normalized_name = ? OR name = ?`,
-			normalized, name).Scan(&conflictID)
+			`SELECT id FROM products WHERE store_id = ? AND (normalized_name = ? OR name = ?)`,
+			d.storeID, normalized, name).Scan(&conflictID)
 		if err == nil {
 			return nil, &ProductConflictError{ProductID: conflictID, Name: name}
 		}
@@ -75,9 +75,9 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 		}
 
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO products (name, normalized_name, category, price, is_available, created_at, updated_at)
-			VALUES (?, ?, ?, ?, 1, ?, ?)`,
-			name, normalized, category, in.Price, now, now)
+			INSERT INTO products (store_id, name, normalized_name, category, price, is_available, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+			d.storeID, name, normalized, category, in.Price, now, now)
 		if err != nil {
 			return nil, fmt.Errorf("insert product: %w", err)
 		}
@@ -86,13 +86,13 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 			return nil, fmt.Errorf("product id: %w", err)
 		}
 	} else {
-		if _, err := getProductQ(ctx, tx, in.ProductID); err != nil {
+		if _, err := getProductQ(ctx, tx, d.storeID, in.ProductID); err != nil {
 			return nil, err
 		}
 		var conflictID int64
 		err := tx.QueryRowContext(ctx,
-			`SELECT id FROM products WHERE (normalized_name = ? OR name = ?) AND id <> ?`,
-			normalized, name, in.ProductID).Scan(&conflictID)
+			`SELECT id FROM products WHERE store_id = ? AND (normalized_name = ? OR name = ?) AND id <> ?`,
+			d.storeID, normalized, name, in.ProductID).Scan(&conflictID)
 		if err == nil {
 			return nil, &ProductConflictError{ProductID: conflictID, Name: name}
 		}
@@ -102,8 +102,8 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE products
 			   SET name = ?, normalized_name = ?, category = ?, price = ?, updated_at = ?
-			 WHERE id = ?`,
-			name, normalized, category, in.Price, now, in.ProductID); err != nil {
+			 WHERE id = ? AND store_id = ?`,
+			name, normalized, category, in.Price, now, in.ProductID, d.storeID); err != nil {
 			return nil, fmt.Errorf("update product: %w", err)
 		}
 		productID = in.ProductID
@@ -143,7 +143,7 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 		return nil, fmt.Errorf("upsert event product: %w", err)
 	}
 
-	product, err := getEventProductQ(ctx, tx, eventID, productID)
+	product, err := getEventProductQ(ctx, tx, d.storeID, eventID, productID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (d *DB) SetProductEnabled(ctx context.Context, eventID string, productID in
 	if enabled {
 		var price int64
 		if err := d.sql.QueryRowContext(ctx,
-			`SELECT price FROM products WHERE id = ?`, productID).Scan(&price); err != nil {
+			`SELECT price FROM products WHERE id = ? AND store_id = ?`, productID, d.storeID).Scan(&price); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, ErrNotFound
 			}
@@ -190,15 +190,15 @@ func (d *DB) SetProductEnabled(ctx context.Context, eventID string, productID in
 			return nil, ErrNotFound
 		}
 	}
-	return getEventProductQ(ctx, d.sql, eventID, productID)
+	return getEventProductQ(ctx, d.sql, d.storeID, eventID, productID)
 }
 
-func getProductQ(ctx context.Context, q querier, productID int64) (*Product, error) {
+func getProductQ(ctx context.Context, q querier, storeID, productID int64) (*Product, error) {
 	var p Product
 	var available int
 	err := q.QueryRowContext(ctx, `
 		SELECT id, name, category, price, is_available, created_at, updated_at
-		  FROM products WHERE id = ?`, productID).
+		  FROM products WHERE id = ? AND store_id = ?`, productID, storeID).
 		Scan(&p.ID, &p.Name, &p.Category, &p.Price, &available, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -211,14 +211,16 @@ func getProductQ(ctx context.Context, q querier, productID int64) (*Product, err
 }
 
 // getEventProductQ returns a product priced and flagged for one event.
-func getEventProductQ(ctx context.Context, q querier, eventID string, productID int64) (*Product, error) {
+func getEventProductQ(ctx context.Context, q querier, storeID int64, eventID string, productID int64) (*Product, error) {
 	var p Product
 	var available int
 	err := q.QueryRowContext(ctx, `
 		SELECT p.id, p.name, p.category, ep.price, ep.is_available, p.created_at, p.updated_at
 		  FROM event_products ep
 		  JOIN products p ON p.id = ep.product_id
-		 WHERE ep.event_id = ? AND p.id = ?`, eventID, productID).
+		 JOIN bazaar_events e ON e.id = ep.event_id
+		 WHERE ep.event_id = ? AND p.id = ? AND p.store_id = ? AND e.store_id = ?`,
+		eventID, productID, storeID, storeID).
 		Scan(&p.ID, &p.Name, &p.Category, &p.Price, &available, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

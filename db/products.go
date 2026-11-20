@@ -34,19 +34,19 @@ func (d *DB) SeedProducts(ctx context.Context, eventID string, rows []MenuRow) (
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO products (name, normalized_name, category, price, is_available, created_at, updated_at)
-			VALUES (?, ?, ?, ?, 1, ?, ?)
+			INSERT INTO products (store_id, name, normalized_name, category, price, is_available, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?)
 			ON CONFLICT(store_id, name) DO UPDATE SET
 				normalized_name = excluded.normalized_name,
 				category = excluded.category,
 				price = excluded.price,
 				updated_at = excluded.updated_at`,
-			name, normalized, row.Category, row.Price, now, now); err != nil {
+			d.storeID, name, normalized, row.Category, row.Price, now, now); err != nil {
 			return 0, fmt.Errorf("upsert product %q: %w", name, err)
 		}
 
 		var productID int64
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM products WHERE name = ?`, name).Scan(&productID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM products WHERE store_id = ? AND name = ?`, d.storeID, name).Scan(&productID); err != nil {
 			return 0, fmt.Errorf("get product id %q: %w", name, err)
 		}
 
@@ -94,12 +94,13 @@ func (d *DB) ListMenu(ctx context.Context, eventID string) ([]MenuProduct, error
 		  FROM event_products ep
 		  JOIN products p ON p.id = ep.product_id
 		 WHERE ep.event_id = ? AND ep.is_available = 1 AND p.is_available = 1
+		   AND p.store_id = ?
 		 ORDER BY CASE p.category
 		            WHEN 'Makanan' THEN 0
 		            WHEN 'Cemilan' THEN 1
 		            WHEN 'Minuman' THEN 2
 		            ELSE 3 END,
-		          p.name`, eventID, eventID)
+		          p.name`, eventID, eventID, d.storeID)
 	if err != nil {
 		return nil, fmt.Errorf("list menu: %w", err)
 	}
@@ -130,7 +131,12 @@ func (d *DB) ListMenu(ctx context.Context, eventID string) ([]MenuProduct, error
 }
 
 func (d *DB) aliases(ctx context.Context) (map[int64][]string, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT product_id, alias FROM product_aliases ORDER BY alias`)
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT pa.product_id, pa.alias
+		  FROM product_aliases pa
+		  JOIN products p ON p.id = pa.product_id
+		 WHERE p.store_id = ?
+		 ORDER BY pa.alias`, d.storeID)
 	if err != nil {
 		return nil, fmt.Errorf("list aliases: %w", err)
 	}
@@ -185,10 +191,10 @@ func (d *DB) findProducts(ctx context.Context, eventID, condition string, args .
 		            THEN 1 ELSE 0 END AS available
 		  FROM event_products ep
 		  JOIN products p ON p.id = ep.product_id
-		 WHERE ep.event_id = ? AND ` + condition + `
+		 WHERE ep.event_id = ? AND p.store_id = ? AND ` + condition + `
 		 ORDER BY p.name
 		 LIMIT 10`
-	fullArgs := append([]any{eventID, eventID}, args...)
+	fullArgs := append([]any{eventID, eventID, d.storeID}, args...)
 	rows, err := d.sql.QueryContext(ctx, query, fullArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("find products: %w", err)
@@ -223,7 +229,7 @@ func (d *DB) GetMenuProduct(ctx context.Context, eventID string, productID int64
 		            THEN 1 ELSE 0 END AS available
 		  FROM event_products ep
 		  JOIN products p ON p.id = ep.product_id
-		 WHERE ep.event_id = ? AND p.id = ?`, eventID, eventID, productID).
+		 WHERE ep.event_id = ? AND p.id = ? AND p.store_id = ?`, eventID, eventID, productID, d.storeID).
 		Scan(&p.ID, &p.Name, &p.Category, &p.Price, &p.IsAvailable, &p.CreatedAt, &p.UpdatedAt, &available)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -233,7 +239,12 @@ func (d *DB) GetMenuProduct(ctx context.Context, eventID string, productID int64
 	}
 	p.Available = intToBool(available)
 
-	rows, err := d.sql.QueryContext(ctx, `SELECT alias FROM product_aliases WHERE product_id = ? ORDER BY alias`, productID)
+	rows, err := d.sql.QueryContext(ctx, `
+		SELECT pa.alias
+		  FROM product_aliases pa
+		  JOIN products p ON p.id = pa.product_id
+		 WHERE pa.product_id = ? AND p.store_id = ?
+		 ORDER BY pa.alias`, productID, d.storeID)
 	if err != nil {
 		return nil, fmt.Errorf("get aliases: %w", err)
 	}

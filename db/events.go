@@ -17,9 +17,9 @@ func (d *DB) CreateEvent(ctx context.Context, e Event) error {
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO bazaar_events (id, name, event_date, cutoff_at, is_active, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Name, e.EventDate, nullableInt(e.CutoffAt), boolToInt(e.IsActive), e.CreatedAt); err != nil {
+		`INSERT INTO bazaar_events (id, store_id, name, event_date, cutoff_at, is_active, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, d.storeID, e.Name, e.EventDate, nullableInt(e.CutoffAt), boolToInt(e.IsActive), e.CreatedAt); err != nil {
 		return fmt.Errorf("create event: %w", err)
 	}
 
@@ -27,9 +27,9 @@ func (d *DB) CreateEvent(ctx context.Context, e Event) error {
 		INSERT INTO event_products (event_id, product_id, price, is_available, created_at, updated_at)
 		SELECT ?, ep.product_id, ep.price, 1, ?, ?
 		  FROM event_products ep
-		 WHERE ep.event_id = (SELECT id FROM bazaar_events WHERE is_active = 1)
+		 WHERE ep.event_id = (SELECT id FROM bazaar_events WHERE is_active = 1 AND store_id = ?)
 		   AND ep.is_available = 1`,
-		e.ID, e.CreatedAt, e.CreatedAt); err != nil {
+		e.ID, e.CreatedAt, e.CreatedAt, d.storeID); err != nil {
 		return fmt.Errorf("copy event menu: %w", err)
 	}
 
@@ -43,14 +43,14 @@ func (d *DB) CreateEvent(ctx context.Context, e Event) error {
 func (d *DB) GetEvent(ctx context.Context, id string) (*Event, error) {
 	return scanEvent(d.sql.QueryRowContext(ctx,
 		`SELECT id, name, event_date, cutoff_at, is_active, created_at
-		 FROM bazaar_events WHERE id = ?`, id))
+		 FROM bazaar_events WHERE id = ? AND store_id = ?`, id, d.storeID))
 }
 
 // GetActiveEvent returns the active event.
 func (d *DB) GetActiveEvent(ctx context.Context) (*Event, error) {
 	return scanEvent(d.sql.QueryRowContext(ctx,
 		`SELECT id, name, event_date, cutoff_at, is_active, created_at
-		 FROM bazaar_events WHERE is_active = 1 LIMIT 1`))
+		 FROM bazaar_events WHERE is_active = 1 AND store_id = ? LIMIT 1`, d.storeID))
 }
 
 // ListEvents returns events newest first with order count and Omzet.
@@ -63,7 +63,8 @@ func (d *DB) ListEvents(ctx context.Context) ([]EventView, error) {
 		                   FROM orders o JOIN order_items oi ON oi.order_id = o.id
 		                  WHERE o.event_id = e.id AND o.status = 'confirmed'), 0) AS omzet
 		  FROM bazaar_events e
-		 ORDER BY e.event_date DESC, e.id`)
+		 WHERE e.store_id = ?
+		 ORDER BY e.event_date DESC, e.id`, d.storeID)
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
@@ -96,16 +97,16 @@ func (d *DB) SetActiveEvent(ctx context.Context, id string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	var exists int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM bazaar_events WHERE id = ?`, id).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM bazaar_events WHERE id = ? AND store_id = ?`, id, d.storeID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("find event: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bazaar_events SET is_active = 0 WHERE is_active = 1`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE bazaar_events SET is_active = 0 WHERE is_active = 1 AND store_id = ?`, d.storeID); err != nil {
 		return fmt.Errorf("deactivate events: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bazaar_events SET is_active = 1 WHERE id = ?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE bazaar_events SET is_active = 1 WHERE id = ? AND store_id = ?`, id, d.storeID); err != nil {
 		return fmt.Errorf("activate event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

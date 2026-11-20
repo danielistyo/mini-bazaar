@@ -21,13 +21,10 @@ func TestMigrationV4BackfillsExistingRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open v3: %v", err)
 	}
-	if err := v3.CreateEvent(ctx, db.Event{
-		ID: eventID, Name: "Bazar KPKM", EventDate: "2026-11-15", CreatedAt: now,
-	}); err != nil {
-		t.Fatalf("create event: %v", err)
-	}
-	if err := v3.SetActiveEvent(ctx, eventID); err != nil {
-		t.Fatalf("activate event: %v", err)
+	if _, err := v3.SQL().Exec(`
+		INSERT INTO bazaar_events (id, name, event_date, is_active, created_at)
+		VALUES (?, 'Bazar KPKM', '2026-11-15', 1, ?)`, eventID, now); err != nil {
+		t.Fatalf("create v3 event: %v", err)
 	}
 	if _, err := v3.SQL().Exec(`
 		INSERT INTO products (name, normalized_name, category, price, is_available, created_at, updated_at)
@@ -50,11 +47,12 @@ func TestMigrationV4BackfillsExistingRows(t *testing.T) {
 		t.Fatalf("close v3: %v", err)
 	}
 
-	d, err := db.Open(path)
+	upgraded, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("upgrade to v4: %v", err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
+	t.Cleanup(func() { _ = upgraded.Close() })
+	d := upgraded.ForStore(1)
 
 	var storeID int64
 	if err := d.SQL().QueryRow(`SELECT id FROM stores WHERE code = 'KPKM'`).Scan(&storeID); err != nil {
