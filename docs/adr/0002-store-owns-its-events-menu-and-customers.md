@@ -221,7 +221,7 @@ tests := []struct{ name string; store int64; want []string }{
 }
 ```
 
-E2E: E2E-02, E2E-03, E2E-06 in
+E2E: E2E-M15, E2E-C7, E2E-O17 in
 [`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
 
 ## Consequences
@@ -233,8 +233,11 @@ E2E: E2E-02, E2E-03, E2E-06 in
   Store `name` stays non-unique.
 - Order items keep their `product_name` snapshot, so a later rename in the same
   store does not rewrite history.
-- `menu.csv`, `make init` and `bazaar-mcp seed-menu` now take a store code.
-  Re-seeding still overwrites prices for the active event only.
+- `make init` now takes a store code. Products are added by chat prompt, one at a
+  time, then confirmed. CSV seeding is being sunset, so nothing depends on a file
+  to define a menu.
+- A new event copies the active event's listed menu, prices included. That is how
+  a menu carries over now, not a re-seed.
 - Each read needs an isolation test. Cheap shape: seed two stores with the same
   product and customer names, then assert every per-store read returns only its
   own row.

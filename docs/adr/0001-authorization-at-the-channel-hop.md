@@ -184,7 +184,7 @@ tests := []struct{ name string; role auth.Role; tool string; want bool }{
 }
 ```
 
-E2E: E2E-04, E2E-05, E2E-06, E2E-07, E2E-09, E2E-10 in
+E2E: E2E-A5, E2E-A6, E2E-O17, E2E-A7, E2E-X8, E2E-A9 in
 [`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
 
 ## Consequences

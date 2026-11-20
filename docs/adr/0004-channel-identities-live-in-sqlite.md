@@ -212,7 +212,7 @@ for _, in := range fixtures {
 }
 ```
 
-E2E: E2E-08 in [`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
+E2E: E2E-A3, E2E-A4 in [`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
 
 ## Consequences
 

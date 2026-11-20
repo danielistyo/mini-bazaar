@@ -132,7 +132,7 @@ tests := []struct{ name string; chat string; wantStore int64; wantErr bool }{
 }
 ```
 
-E2E: E2E-04, E2E-05, E2E-09 in
+E2E: E2E-A5, E2E-A6, E2E-X8 in
 [`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
 
 ## Consequences
