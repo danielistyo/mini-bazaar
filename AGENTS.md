@@ -417,8 +417,9 @@ Web UI or dashboard, payment gateway or QRIS, customer self-service, simultaneou
 ## Open items
 
 - Dry-run the order flow in both allowed groups and confirm the PM-WA command filter.
+- Telegram: deferred until ADR 0001's reversal, the backend implementation, and the e2e run are done. The channel exists in ZeroClaw source but is feature-gated (`channel-telegram`), so it needs a rebuild plus a BotFather token. Telegram bots cannot start a DM, a user must press Start first.
 - Confirm PM-WA reminder `yes` / `no` replies do not cause duplicate ZeroClaw replies; add them to the filter only if they do.
-- Re-apply the PM-WA prefix patch after every ZeroClaw update.
+- Re-apply both ZeroClaw patches after every update: the PM-WA prefix filter, and the identity patch that puts chat and sender on each tool call. A missing identity patch must deny, never guess.
 - Monitor provider latency: the first live turn took ~20s, and the reply-intent precheck timed out at 5s (it fails open).
 - Later: decide whether to patch ZeroClaw upstream to pass quoted text for the exact reply UX.
 
