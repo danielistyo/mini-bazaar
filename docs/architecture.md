@@ -1,11 +1,12 @@
 # Architecture
 
-Status: draft, 2026-11-20. The diagrams match ADR 0001 to 0004.
+Status: 2026-11-21. Matches ADR 0001 to 0004 after the decision to keep ZeroClaw.
 
 ## Level 1: system context
 
-Who talks to what, and where the trust boundary sits. The gateway is the only
-component allowed to say who is calling.
+ZeroClaw holds the channel sessions, so it is the only component that knows who
+spoke. It passes that on with every tool call, and the backend refuses anything
+that arrives without it.
 
 ```mermaid
 flowchart LR
@@ -15,75 +16,72 @@ flowchart LR
     end
 
     subgraph ch["Chat channels"]
-        WA["WhatsApp"]
-        TG["Telegram"]
+        WA["WhatsApp Web"]
+        TG["Telegram (later)"]
     end
 
-    GW["Gateway<br/>resolves chat and sender,<br/>issues signed scope"]
-    AG["Agent runtime<br/>LLM chooses tools"]
-    BE["bazaar-mcp<br/>17 tools, policy, money"]
+    ZC["ZeroClaw<br/>mention gate, passive context,<br/>LLM, injects _bazaar_ctx"]
+    BE["bazaar-mcp<br/>resolves scope, role matrix,<br/>WHERE store_id = ?"]
     DB[("SQLite<br/>orders.db")]
 
     ORG --> WA
     SM --> WA
-    SM --> TG
-    WA --> GW
-    TG --> GW
-    GW -->|"text + signed scope"| AG
-    AG -->|"tools/call, scope in _meta"| BE
+    SM -.-> TG
+    WA --> ZC
+    TG -.-> ZC
+    ZC -->|"tools/call + context"| BE
     BE --> DB
 
-    classDef boundary stroke-width:3px,stroke:#b00
-    class GW boundary
+    classDef anchor stroke-width:3px,stroke:#b00
+    class ZC anchor
 ```
+
+The thick box is the trust anchor: the local parent process that spawns
+`bazaar-mcp` over stdio. No network hop, no token.
 
 ## Level 2: components
 
-Inside the three components. Two channels today, and a new one is an adapter plus
-nothing else.
-
 ```mermaid
 flowchart TB
-    subgraph gw["Gateway"]
+    subgraph zc["ZeroClaw"]
         direction TB
-        ADW["whatsapp adapter"]
-        ADT["telegram adapter"]
-        RES["resolver<br/>chat_ref, sender_ref to store + role"]
-        SIGN["signer<br/>HMAC-SHA256, 300s"]
-        ADW --> RES
-        ADT --> RES
-        RES --> SIGN
-    end
-
-    subgraph ag["Agent runtime"]
+        ADW["whatsapp_web channel"]
+        ADT["telegram channel"]
+        GATE["mention gate, allowlist,<br/>PM-WA prefix filter"]
+        ORCH["orchestrator turn<br/>reply_target, sender, message_id"]
         LLM["LLM"]
-        TC["tool call assembly"]
-        LLM --> TC
+        DISP["tool dispatch<br/>injects _bazaar_ctx"]
+        ADW --> GATE
+        ADT --> GATE
+        GATE --> ORCH
+        ORCH --> LLM
+        LLM --> DISP
     end
 
     subgraph be["bazaar-mcp"]
-        VER["scope verifier"]
+        RES["scope resolver<br/>chat or sender to store + role"]
         ROL["role matrix"]
         HND["tool handlers"]
         QRY["db queries<br/>WHERE store_id = ?"]
-        VER --> ROL --> HND --> QRY
+        RES --> ROL --> HND --> QRY
     end
 
     DB[("SQLite")]
 
-    SIGN --> LLM
-    TC --> VER
+    ORCH --> DISP
+    DISP --> RES
     QRY --> DB
-    ROL -->|"live authority row"| DB
+    RES --> DB
 ```
 
 ## Level 3: where the pieces live
 
 | Concern | Package | Notes |
 |---|---|---|
-| Channel authentication, scope signing | `gateway/` (new) | only writer of scope tokens |
-| Scope verification, role matrix | `mcpserver/` | one wrapper around `mcp.AddTool` |
-| Policy, money, drafts | `orders/` | unchanged, receives `Scope` |
+| Channel sessions, mention gating, LLM | ZeroClaw (Rust, forked) | fork carries two patches: PM-WA filter, context injection |
+| Tool-call context | `zeroclaw-tools` (`mcp_tool.rs`, `mcp_client.rs`) | `_bazaar_ctx` merged into args |
+| Scope resolution, role matrix | `mcpserver/` | one wrapper around `mcp.AddTool` |
+| Policy, money, drafts | `orders/` | receives a `Scope` |
 | SQL, store predicates | `db/` | every statement takes a store |
 | User-visible text | `format/` | never receives a channel identity |
 
@@ -97,24 +95,19 @@ sequenceDiagram
     autonumber
     actor M as Store member
     participant WA as WhatsApp
-    participant GW as Gateway
-    participant AG as Agent runtime
+    participant ZC as ZeroClaw
     participant BE as bazaar-mcp
     participant DB as SQLite
 
     M->>WA: catat Bu Ratna sate 2
-    WA->>GW: chat_ref, sender_ref, text
-    GW->>DB: lookup binding or membership
-    DB-->>GW: store 1, role staff, account 12
-    GW->>GW: sign scope, exp = now + 300
-    GW->>AG: text + scope token
-    AG->>BE: tools/call create_order_draft + _meta scope
-    BE->>BE: verify signature, iss, aud, exp
-    BE->>DB: live authority row, store 1
-    DB-->>BE: status active, role staff
-    BE->>DB: INSERT draft ... WHERE store_id = 1
-    DB-->>BE: draft D-7K2M9Q, code 4821
-    BE-->>AG: ok, formatted preview
-    AG-->>WA: preview + "OK 4821"
-    WA-->>M: preview + "OK 4821"
+    WA->>ZC: message with chat_ref and sender_ref
+    ZC->>ZC: mention gate, then LLM picks create_order_draft
+    ZC->>BE: tools/call with _bazaar_ctx injected
+    BE->>DB: store_groups by (channel, chat_ref)
+    DB-->>BE: store 1, role staff
+    BE->>DB: INSERT draft WHERE store_id = 1
+    DB-->>BE: draft and 4-digit code
+    BE-->>ZC: ok, formatted preview
+    ZC-->>WA: preview + OK 4821
+    WA-->>M: preview + OK 4821
 ```
