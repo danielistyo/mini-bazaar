@@ -35,11 +35,11 @@ failure.
 
 ## Driver session
 
-`@ZeroClaw` in the rows below means "mention the bot account". WhatsApp works a
-mention by the member's display name in that group, so use whatever name the
-account actually has there; if the account is renamed, every row still means the
-same thing. Mentioning is not decoration: the channel is mention-only in groups,
-so a message without it is ignored (E2E-X3, E2E-X6).
+`@<bot-account>` in the rows below is the bot account's display name. WhatsApp
+resolves a mention by the member's name in that group, so the real value comes
+from `AGENTS.local.md` and is never written into a tracked file. If the account is
+renamed, every row still means "mention the bot". Mentioning is not decoration:
+groups are mention-only, so a message without it is ignored (E2E-X3, E2E-X6).
 
 The tab is the one `tools.browse.tabs` reports for `web.whatsapp.com`. Its numeric
 id changes between sessions, so read it fresh and call it `<tab>`.
@@ -53,7 +53,7 @@ id changes between sessions, so read it fresh and call it `<tab>`.
 ```js
 await tools.browse.snapshot({ tab: "<tab>", find: "Sie bazzar", maxItems: 20 });
 await tools.browse.click({ tab: "<tab>", ref: "e12" });
-await tools.browse.fill({ tab: "<tab>", ref: "e40", text: "@ZeroClaw catat Bu Ratna sate 2" });
+await tools.browse.fill({ tab: "<tab>", ref: "e40", text: "@<bot-account> catat Bu Ratna sate 2" });
 await tools.browse.press({ tab: "<tab>", key: "Enter" });
 await tools.browse.snapshot({ tab: "<tab>", find: "OK", context: 6 });
 ```
@@ -65,10 +65,10 @@ on it stops working the day it is removed. Set the menu through the chat, one
 product at a time, on the test event. Each add is preview then `OK <code>`.
 
 ```
-@ZeroClaw tambah sate ayam 35rb        -> preview -> OK 1234
-@ZeroClaw tambah es teh 5rb            -> preview -> OK 5678
-@ZeroClaw tambah lauk ayam mboksiah 20rb
-@ZeroClaw tambah cincau gurin 12rb
+@<bot-account> tambah sate ayam 35rb        -> preview -> OK 1234
+@<bot-account> tambah es teh 5rb            -> preview -> OK 5678
+@<bot-account> tambah lauk ayam mboksiah 20rb
+@<bot-account> tambah cincau gurin 12rb
 ```
 
 Prices above are examples. Set whatever the run needs; the assertions read the
@@ -210,7 +210,7 @@ Ordering matters here, so these get steps instead of a row.
 
 ### Create and confirm (E2E-O1)
 
-1. In `Sie bazzar`: `@ZeroClaw catat Bu Ratna sate 2`.
+1. In `Sie bazzar`: `@<bot-account> catat Bu Ratna sate 2`.
 2. Preview must name the event, the canonical product, the unit price, the line
    total and `OK <code>`.
 3. Reply `OK <code>`.
@@ -226,7 +226,7 @@ SELECT o.order_number, o.status, c.display_name, oi.product_name, oi.quantity, o
 ### Edit a paid order (E2E-O8, E2E-O9)
 
 1. Confirm an order, then mark it paid.
-2. `@ZeroClaw ubah pesanan Bu Ratna sate 3 es teh 2`.
+2. `@<bot-account> ubah pesanan Bu Ratna sate 3 es teh 2`.
 3. Preview must show before and after, the new total, and a paid warning.
 4. `OK <code>`.
 
@@ -237,7 +237,7 @@ SELECT action FROM order_audit_logs WHERE order_id=<id>;       -- includes payme
 
 ### Cancel (E2E-O11, E2E-O12)
 
-1. `@ZeroClaw batalkan pesanan Bu Ratna`.
+1. `@<bot-account> batalkan pesanan Bu Ratna`.
 2. Preview shows items, total, paid state and a code.
 3. `OK <code>` twice.
 
@@ -270,7 +270,7 @@ SELECT status, committed_at FROM drafts WHERE short_code='<code>';
 
 ## Teardown
 
-1. `@ZeroClaw aktifkan event BAZAR-2026-11-15`, confirm the reply names it.
+1. `@<bot-account> aktifkan event BAZAR-2026-11-15`, confirm the reply names it.
 2. Revoke bindings created for the run; restore any suspended store.
 3. `pgrep -af pm-wa` unchanged, `free -h` back to baseline.
 4. Close the tabs the agent opened; leave the WhatsApp tab alone.

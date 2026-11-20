@@ -2,7 +2,7 @@
 
 Instructions for AI agents working in this repository.
 
-Deployment values (bot number, group JIDs, host, ssh user, checkout path) are replaced by placeholders such as `<bot-number>`. If `AGENTS.local.md` exists, read it for the real values; it is gitignored.
+Deployment values (bot number, bot account display name, group JIDs, host, ssh user, checkout path) are replaced by placeholders such as `<bot-number>` and `<bot-account>`. If `AGENTS.local.md` exists, read it for the real values; it is gitignored.
 
 ## What this is
 
@@ -12,7 +12,7 @@ Bazar KPKM Order Assistant: a WhatsApp bot that records food and drink orders fo
 - **A local Go MCP server** owns the order logic and exposes tools over stdio.
 - **SQLite** is the single source of truth for events, customers, orders, payments, and history.
 
-Status: live on 2026-11-12. Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp Web is paired as `<bot-number>` and patched to drop PM-WA commands. DMs are on; allowed groups are `Pengurus KPKM Awet Muda` and `Sie bazzar`. Target: **Bazar KPKM, Sunday 15 November 2026**. Menu: per event, backed by a shared catalog; the live event has 29 products.
+Status: live on 2026-11-12. Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp Web is paired as `<bot-number>`, account display name `<bot-account>`, and patched to drop PM-WA commands. DMs are on; allowed groups are `Pengurus KPKM Awet Muda` and `Sie bazzar`. Target: **Bazar KPKM, Sunday 15 November 2026**. Menu: per event, backed by a shared catalog; the live event has 29 products.
 
 ## Hard rules
 
@@ -230,16 +230,16 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 ### Group: team member relays an order
 
 1. A team member forwards or posts the order text in the team group. It must name the customer, for example "Bu Ratna pesan sate 2".
-2. The organizer replies to that message mentioning the bot: "@ZeroClaw catat ini".
+2. The organizer replies to that message mentioning the bot: "@<bot-account> catat ini".
 3. ZeroClaw does not pass the quoted message. With `passive_group_context`, the bot reads the forwarded text from recent group history. If several recent order messages are plausible, it asks which one.
 4. The same draft and confirmation flow applies. Preview and receipt are visible to the group.
-5. To confirm, reply to the bot's preview with `OK 4821`. If the bot ignores a reply (mention gating), include `@ZeroClaw`.
+5. To confirm, reply to the bot's preview with `OK 4821`. If the bot ignores a reply (mention gating), include `@<bot-account>`.
 6. Send the mention immediately after the order. Older messages can fall out of the 50-message context window.
 
 ### Event creation and switching (simulation)
 
-1. "@ZeroClaw buat event Test Bazar 12 November 2026" calls `create_event`. The bot reports code, date, and that the event is inactive.
-2. "@ZeroClaw aktifkan event TEST-2026-11-12" calls `set_active_event`. The bot announces the switch.
+1. "@<bot-account> buat event Test Bazar 12 November 2026" calls `create_event`. The bot reports code, date, and that the event is inactive.
+2. "@<bot-account> aktifkan event TEST-2026-11-12" calls `set_active_event`. The bot announces the switch.
 3. Simulate orders and summaries. They are scoped to the test event.
 4. Switch back to `BAZAR-2026-11-15` before real use.
 
@@ -264,6 +264,7 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 ## WhatsApp and ZeroClaw configuration
 
 - Channel: WhatsApp Web build, persistent `session_path` under `data/wa-session`.
+- Mention handle: the bot account's WhatsApp display name is `<bot-account>`. In a group it is mentioned as `@<bot-account>`, and that name is what `mention_only = true` matches. A message without it is ignored, so examples in this repo write `@<bot-account>` rather than a literal name.
 - Groups: allowlist exactly two groups: `Pengurus KPKM Awet Muda` (`<group-jid>`) and `Sie bazzar` (`<group-jid>`). `group_policy = "allowlist"`, `mention_only = true`, `passive_group_context = true`, `max_history_messages = 50`.
 - DM: `dm_policy = "all"`. The bot shares the PM-WA WhatsApp account (`<bot-number>`), so the channel drops PM-WA command prefixes before the agent (see PM-WA coexistence below).
 - No sender allowlist inside the allowed groups: every member may operate the bot. No JID storage in SQLite.
