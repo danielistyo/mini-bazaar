@@ -35,6 +35,12 @@ failure.
 
 ## Driver session
 
+`@ZeroClaw` in the rows below means "mention the bot account". WhatsApp works a
+mention by the member's display name in that group, so use whatever name the
+account actually has there; if the account is renamed, every row still means the
+same thing. Mentioning is not decoration: the channel is mention-only in groups,
+so a message without it is ignored (E2E-X3, E2E-X6).
+
 The tab is the one `tools.browse.tabs` reports for `web.whatsapp.com`. Its numeric
 id changes between sessions, so read it fresh and call it `<tab>`.
 
