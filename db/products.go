@@ -36,7 +36,7 @@ func (d *DB) SeedProducts(ctx context.Context, eventID string, rows []MenuRow) (
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO products (name, normalized_name, category, price, is_available, created_at, updated_at)
 			VALUES (?, ?, ?, ?, 1, ?, ?)
-			ON CONFLICT(name) DO UPDATE SET
+			ON CONFLICT(store_id, name) DO UPDATE SET
 				normalized_name = excluded.normalized_name,
 				category = excluded.category,
 				price = excluded.price,

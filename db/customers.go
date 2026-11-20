@@ -75,7 +75,7 @@ func getCustomerByNormalized(ctx context.Context, q querier, normalized string) 
 func createCustomer(ctx context.Context, q querier, displayName, normalized string, now int64) (*Customer, error) {
 	if _, err := q.ExecContext(ctx,
 		`INSERT INTO customers (display_name, normalized_name, created_at) VALUES (?, ?, ?)
-		 ON CONFLICT(normalized_name) DO NOTHING`, displayName, normalized, now); err != nil {
+		 ON CONFLICT(store_id, normalized_name) DO NOTHING`, displayName, normalized, now); err != nil {
 		return nil, fmt.Errorf("create customer: %w", err)
 	}
 	return getCustomerByNormalized(ctx, q, normalized)
