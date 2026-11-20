@@ -110,6 +110,31 @@ row only exists after a link claim is redeemed; see ADR 0004.
 - Allow many, refuse writes without an explicit store, allow reads for all: half a
   store becomes readable from the other half.
 
+## Tests
+
+Unit, in `db_test`, one temp SQLite per case.
+
+| Case | Setup | Expect |
+|---|---|---|
+| second binding | two active rows for the same chat | unique violation on `idx_one_active_group` |
+| rebind | revoke, then insert active | succeeds, two rows total |
+| second membership | two active `store_members` for one account | unique violation |
+| group resolution | active binding for the chat | `Scope{store, role, principal: group}` |
+| DM with no store | account with no membership | `no_store`, no fallback |
+| DM with one store | one active membership | `Scope{store, role, principal: account}` |
+| group and DM disagree | account in store 1, chat bound to store 2 | chat wins inside the chat, membership wins in DM |
+| revoked binding | row `revoked` | `no_store` |
+
+```go
+tests := []struct{ name string; chat string; wantStore int64; wantErr bool }{
+	{"bound chat", "120363...@g.us", 1, false},
+	{"unbound chat", "999...@g.us", 0, true},
+}
+```
+
+E2E: E2E-04, E2E-05, E2E-09 in
+[`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
+
 ## Consequences
 
 - Resolution is one lookup with one answer. No prompt, no session, no stored

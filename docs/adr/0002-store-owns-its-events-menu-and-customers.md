@@ -198,6 +198,32 @@ after `COMMIT` is too late to roll back.
 - One database file per store: real isolation, N processes, N backups, and it
   contradicts ADR 0001 and 0003.
 
+## Tests
+
+Unit, in the external `db_test` package, one temp SQLite per case.
+
+| Case | Setup | Expect |
+|---|---|---|
+| same product name | seed `Sate ayam` in stores 1 and 2 | both insert, `find_product` returns one per store |
+| same customer name | `Susi` in both stores, one order in store 1 | `find_customer` in store 2 shows count 0 |
+| active event isolation | activate store 2's event | store 1's active event unchanged |
+| foreign event id | store 1 scoped, select store 2's event | `ErrNotFound` |
+| order code space | order in each store's event | both are `#BK-001` |
+| price snapshot | commit, then change `event_products.price` | `order_items.unit_price` unchanged |
+| unscoped handle | `ForStore(0)` | every read returns zero rows |
+| migration | V3 database fixture | V4 backfills store 1, `foreign_key_check` empty |
+
+```go
+tests := []struct{ name string; store int64; want []string }{
+	{"store 1 sees only its menu", 1, []string{"Sate ayam"}},
+	{"store 2 sees only its menu", 2, []string{"Sate ayam"}},
+	{"unscoped sees nothing", 0, nil},
+}
+```
+
+E2E: E2E-02, E2E-03, E2E-06 in
+[`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
+
 ## Consequences
 
 - `stores` uses an integer `id`, unlike `bazaar_events` whose primary key is the

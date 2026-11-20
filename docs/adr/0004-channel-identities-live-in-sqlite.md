@@ -186,6 +186,34 @@ the account is gone.
   who granted what, every channel re-implements the mapping, and the backend must
   ask the gateway on every message.
 
+## Tests
+
+Unit, in `db_test`.
+
+| Case | Setup | Expect |
+|---|---|---|
+| one account per identity | second account with the same `ref` | unique violation |
+| claim unknown | redeem `ZZZZZZ` | `claim_invalid`, no row created |
+| claim expired | `expires_at = now - 1` | `claim_invalid` |
+| claim reused | redeem twice | second returns `claim_invalid`, one row created |
+| claim wrong purpose | `link_channel` redeemed as a group bind | `claim_invalid` |
+| link second channel | redeem from Telegram | one `account_channels` row, same `account_id` |
+| group bind | redeem inside the chat | `store_groups` active, `claims.used_at` set |
+| no ref in replies | format previews from fixtures containing a ref | the ref string never appears in output |
+
+The last one is the rule with teeth, so it runs over every string the assistant
+can send:
+
+```go
+for _, in := range fixtures {
+	if strings.Contains(render(in), "6281234567890@s.whatsapp.net") {
+		t.Fatalf("%s leaks a channel identity", in.name)
+	}
+}
+```
+
+E2E: E2E-08 in [`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
+
 ## Consequences
 
 - Backups and exports contain real people's identifiers. Treat them as personal

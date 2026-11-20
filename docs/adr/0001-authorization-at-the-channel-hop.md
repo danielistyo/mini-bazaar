@@ -154,6 +154,39 @@ Failure example. The admin revokes the group binding at 12:00:00. A message at
 - `store` as a tool argument validated server-side: proves the store exists, not
   that the caller belongs to it.
 
+## Tests
+
+Unit, in `auth` and `mcpserver`, table-driven per case.
+
+| Case | Setup | Expect |
+|---|---|---|
+| valid scope | token signed with the key, `exp` future | handler runs, `Scope` in context |
+| tampered payload | flip one byte of the JSON | `scope_invalid` |
+| wrong key | sign with a different secret | `scope_invalid` |
+| expired | `exp = now - 1` | `scope_expired` |
+| wrong audience | `aud = "other"` | `scope_invalid` |
+| revoked binding | token valid, authority row `revoked` | `no_store` |
+| suspended store | `stores.status = 'suspended'` | `store_suspended` |
+| role too low | staff token on an organizer tool | `role_denied`, handler not called |
+| cross-store event | store 1 token, event id of store 2 | `not_found`, zero rows |
+| missing token | no `_meta` key | `scope_invalid` |
+
+The role matrix is one table: every tool name, the minimum role, expected
+allow or deny. A new tool that is not in the table must default to deny, and a
+test asserts that.
+
+```go
+tests := []struct{ name string; role auth.Role; tool string; want bool }{
+	{"staff can draft", auth.Staff, "create_order_draft", true},
+	{"staff cannot change menu", auth.Staff, "upsert_product", false},
+	{"organizer can change menu", auth.Organizer, "upsert_product", true},
+	{"unknown tool is denied", auth.Organizer, "drop_all_orders", false},
+}
+```
+
+E2E: E2E-04, E2E-05, E2E-06, E2E-07, E2E-09, E2E-10 in
+[`docs/testing/e2e-whatsapp.md`](../testing/e2e-whatsapp.md).
+
 ## Consequences
 
 - HTTP or stdio: the backend must be able to read the scope per call, so a
