@@ -313,13 +313,16 @@ Known adapter limits in ZeroClaw v0.9.0:
 
 Host baseline (measured 2026-11-12): 1.9 GiB RAM total, 2 vCPU, 6 GB swap (4 GB + 2 GB) added for the ZeroClaw source build. Go 1.25.9, SQLite 3.46.1, AlmaLinux 10. PM-WA uses ~47 MB RSS; total used ~700 MiB. A Go MCP server (~10–20 MB) is well within budget.
 
+`scripts/deploy.sh` does steps 1 to 6 below in order and stops when `make e2e`
+fails. Running them by hand is fine, the gate is not.
+
 Steps:
 
 1. SSH to the host and clone or pull the repo into the checkout.
 2. Build the MCP server: `make build` (`CGO_ENABLED=1 go build -o bin/bazaar-mcp ./cmd/bazaar-mcp`).
 3. Install ZeroClaw from source with the `whatsapp-web` feature. The prebuilt v0.8.7 tarball and .deb do **not** include WhatsApp Web (`zeroclaw channel list` says "configured, not compiled"). See the build note below.
 4. Write the ZeroClaw config: provider, MCP server, WhatsApp policies. Keep the Go API key in the secret store or environment.
-5. Seed the database: `make init` (creates the schema and the KPKM store). Add products through chat; `make seed-menu MENU=menu.csv` still works but is sunset.
+5. Run `make e2e` and require it to pass before restarting. Then seed if needed: `make init` (creates the schema and the KPKM store). Add products through chat; `make seed-menu MENU=menu.csv` still works but is sunset.
 6. Start a new tmux session named `bazaar`. Run ZeroClaw in the foreground with logs at `logs/zeroclaw.log`.
 7. Pair WhatsApp by scanning the QR from the bot account. Confirm the session path persists.
 8. Dry-run in a test event, then switch to `BAZAR-2026-11-15`.
@@ -387,6 +390,9 @@ Backup:
 - `make build` runs `CGO_ENABLED=1 go build -o bin/bazaar-mcp ./cmd/bazaar-mcp`.
 - `make lint` runs `go vet ./...`.
 - `make test` runs `go test ./...`.
+- `make e2e` runs `scripts/e2e_backend.py`: the real binary over stdio with the
+  injected context, against a copy of the database. Required after every deploy;
+  a failure means do not restart the bot.
 - `make init` creates the schema and seeds `BAZAR-2026-11-15`.
 - `make seed-menu MENU=menu.csv` seeds products and aliases into the Active Event. Sunset: prefer `upsert_product` from chat.
 - `make run` runs `BAZAAR_DB=data/orders.db ./bin/bazaar-mcp serve`. Add `--pilot-store KPKM` only while the runtime does not inject context.

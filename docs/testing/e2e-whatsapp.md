@@ -20,6 +20,11 @@ Production means real data, so the guards are part of the test.
 
 ## Deployment gate
 
+`make e2e` must pass before the restart. `scripts/deploy.sh` enforces it: pull,
+build, e2e, backup, restart, and the bot keeps its previous process when the
+suite fails.
+
+
 In the `bazaar` tmux session only:
 
 ```sh

@@ -20,4 +20,9 @@ seed-menu: build
 run: build
 	BAZAAR_DB=$(DB) $(BIN) serve
 
-.PHONY: build lint test init seed-menu run
+.PHONY: build lint test e2e init seed-menu run
+
+# Required after every deploy. Runs the real binary against a copy of the
+# database; a failure means do not restart the bot.
+e2e: build
+	BAZAAR_DB=$(DB) BAZAAR_BIN=$(BIN) python3 scripts/e2e_backend.py

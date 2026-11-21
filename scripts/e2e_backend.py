@@ -11,9 +11,11 @@ import subprocess
 import sys
 import time
 
-SRC = "/home/emangtop/bazaar-minggu/data/orders.db"
-DB = "/tmp/e2e.db"
-BIN = "/home/emangtop/bazaar-minggu/bin/bazaar-mcp"
+import os
+
+SRC = os.environ.get("BAZAAR_DB", "data/orders.db")
+DB = os.environ.get("BAZAAR_E2E_DB", "/tmp/e2e.db")
+BIN = os.environ.get("BAZAAR_BIN", "bin/bazaar-mcp")
 
 fails = []
 passes = []
@@ -28,9 +30,15 @@ def check(name, cond, detail=""):
         print(f"FAIL {name} {detail}")
 
 
+if not os.path.exists(SRC):
+    print(f"FAIL source database not found: {SRC} (set BAZAAR_DB)", file=sys.stderr)
+    sys.exit(2)
+if not os.path.exists(BIN):
+    print(f"FAIL binary not found: {BIN} (run make build, or set BAZAAR_BIN)", file=sys.stderr)
+    sys.exit(2)
+
 for suffix in ("", "-wal", "-shm"):
     try:
-        import os
         os.remove(DB + suffix)
     except FileNotFoundError:
         pass
