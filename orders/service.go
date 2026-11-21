@@ -383,13 +383,19 @@ type StoreView struct {
 const claimTTL = 15 * time.Minute
 
 // CreateStore registers a store and makes the caller its organizer.
-func (s *Service) CreateStore(ctx context.Context, channel, senderRef, code, name string) (*StoreView, error) {
+func (s *Service) CreateStore(ctx context.Context, channel, chatRef, senderRef, code, name string) (*StoreView, error) {
 	if channel == "" || senderRef == "" {
 		return nil, errf("unauthorized", "Store baru hanya bisa dibuat dari chat pribadi.")
 	}
+	if chatRef != "" && chatRef != senderRef {
+		return nil, errf("not_allowed", "Store baru hanya bisa dibuat dari chat pribadi.")
+	}
 	store, err := s.db.CreateStoreWithOrganizer(ctx, code, name, channel, senderRef, time.Now().Unix())
-	if errors.Is(err, db.ErrStoreCodeTaken) {
+	switch {
+	case errors.Is(err, db.ErrStoreCodeTaken):
 		return nil, errf("conflict", "Kode store %s sudah dipakai.", strings.ToUpper(strings.TrimSpace(code)))
+	case errors.Is(err, db.ErrAlreadyMember):
+		return nil, errf("conflict", "Kamu sudah punya store. Satu orang satu store dulu.")
 	}
 	if err != nil {
 		return nil, err
@@ -419,7 +425,10 @@ func (s *Service) CreateGroupClaim(ctx context.Context, accountID *int64, role s
 }
 
 // RedeemGroupClaim binds the current chat to the store named by the code.
-func (s *Service) RedeemGroupClaim(ctx context.Context, code, channel, chatRef string) (*StoreView, error) {
+func (s *Service) RedeemGroupClaim(ctx context.Context, code, channel, chatRef, senderRef string) (*StoreView, error) {
+	if chatRef == "" || chatRef == senderRef {
+		return nil, errf("not_allowed", "Kirim kodenya di grup tujuannya, bukan di chat pribadi.")
+	}
 	sc, err := s.db.RedeemGroupClaim(ctx, strings.ToUpper(strings.TrimSpace(code)), channel, chatRef, time.Now().Unix())
 	switch {
 	case errors.Is(err, db.ErrClaimInvalid):

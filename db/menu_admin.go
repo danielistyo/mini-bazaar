@@ -61,6 +61,15 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var owned int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM bazaar_events WHERE id = ? AND store_id = ?`, eventID, d.storeID).Scan(&owned); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("check event: %w", err)
+	}
+
 	var productID int64
 	if in.ProductID == 0 {
 		var conflictID int64
@@ -156,6 +165,18 @@ func (d *DB) UpsertProduct(ctx context.Context, in ProductInput) (*Product, erro
 // SetProductEnabled toggles a product's listing on one event's menu.
 // Enabling a catalog product that is not listed yet adds it at the catalog price.
 func (d *DB) SetProductEnabled(ctx context.Context, eventID string, productID int64, enabled bool) (*Product, error) {
+	var owned int
+	if err := d.sql.QueryRowContext(ctx,
+		`SELECT 1 FROM bazaar_events WHERE id = ? AND store_id = ?`, eventID, d.storeID).Scan(&owned); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("check event: %w", err)
+	}
+	if _, err := getProductQ(ctx, d.sql, d.storeID, productID); err != nil {
+		return nil, err
+	}
+
 	now := time.Now().Unix()
 	if enabled {
 		var price int64

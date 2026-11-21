@@ -57,7 +57,8 @@ func serveFlags(args []string, fallback string) (string, string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: bazaar-mcp <serve|init|seed-menu <menu.csv>>")
+	fmt.Fprintln(os.Stderr, "usage: bazaar-mcp <serve [--db PATH] [--pilot-store CODE]|init|seed-menu <menu.csv>>")
+	fmt.Fprintln(os.Stderr, "--pilot-store is a pilot-only escape hatch; it must not be used once the runtime injects context")
 }
 
 func serve(dbPath, pilotStore string) {
@@ -76,7 +77,7 @@ func serve(dbPath, pilotStore string) {
 			fatal("pilot store: " + err.Error())
 		}
 		pilot = &db.Scope{StoreID: store.ID, Role: db.RoleOrganizer, Kind: db.PrincipalAccount}
-		slog.Warn("pilot store active: every call without injected context acts as organizer", "store", store.Code)
+		slog.Error("PILOT MODE: every call without injected context acts as organizer; remove --pilot-store before production", "store", store.Code)
 	}
 
 	server := mcpserver.New(d, orders.New(d), pilot)

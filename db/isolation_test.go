@@ -131,3 +131,66 @@ func TestReadsAreIsolatedByStore(t *testing.T) {
 		}
 	})
 }
+
+// Menu administration must not reach into another store's event, even when the
+// caller knows its event id and product id.
+func TestMenuAdminCannotTouchAnotherStore(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().Unix()
+	d1 := openTestDB(t)
+
+	const event1, event2 = "KPKM-EVENT", "WARTEG-EVENT"
+	if err := d1.CreateEvent(ctx, db.Event{ID: event1, Name: "KPKM", EventDate: "2026-11-15", CreatedAt: now}); err != nil {
+		t.Fatalf("event 1: %v", err)
+	}
+	if err := d1.SetActiveEvent(ctx, event1); err != nil {
+		t.Fatalf("activate 1: %v", err)
+	}
+	if _, err := d1.SeedProducts(ctx, event1, []db.MenuRow{{Category: "Makanan", Name: "Sate ayam", Price: 35000}}); err != nil {
+		t.Fatalf("menu 1: %v", err)
+	}
+
+	store2, err := d1.CreateStoreWithOrganizer(ctx, "WARTEG", "Warteg", "whatsapp", "628222@s.whatsapp.net", now)
+	if err != nil {
+		t.Fatalf("store 2: %v", err)
+	}
+	d2 := d1.ForStore(store2.ID)
+	if err := d2.CreateEvent(ctx, db.Event{ID: event2, Name: "Warteg", EventDate: "2026-11-15", CreatedAt: now}); err != nil {
+		t.Fatalf("event 2: %v", err)
+	}
+	if err := d2.SetActiveEvent(ctx, event2); err != nil {
+		t.Fatalf("activate 2: %v", err)
+	}
+	if _, err := d2.SeedProducts(ctx, event2, []db.MenuRow{{Category: "Makanan", Name: "Sate ayam", Price: 30000}}); err != nil {
+		t.Fatalf("menu 2: %v", err)
+	}
+	menu2, err := d2.ListMenu(ctx, event2)
+	if err != nil || len(menu2) != 1 {
+		t.Fatalf("menu 2 = %+v, %v", menu2, err)
+	}
+
+	if _, err := d1.SetProductEnabled(ctx, event2, menu2[0].ID, false); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("disable foreign product err = %v, want ErrNotFound", err)
+	}
+	if _, err := d1.SetProductEnabled(ctx, event2, menu2[0].ID, true); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("enable foreign product err = %v, want ErrNotFound", err)
+	}
+	after, err := d2.ListMenu(ctx, event2)
+	if err != nil || len(after) != 1 {
+		t.Fatalf("store 2 menu after foreign write = %+v, %v", after, err)
+	}
+
+	if _, err := d1.UpsertProduct(ctx, db.ProductInput{
+		EventID: event2, Name: "Nasi bungkus", Category: "Makanan", Price: 15000,
+	}); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("upsert on foreign event err = %v, want ErrNotFound", err)
+	}
+	var leaked int
+	if err := d1.SQL().QueryRow(
+		`SELECT COUNT(*) FROM products WHERE store_id = 1 AND name = 'Nasi bungkus'`).Scan(&leaked); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if leaked != 0 {
+		t.Fatalf("store 1 gained %d product(s) from a refused upsert", leaked)
+	}
+}

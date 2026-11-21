@@ -445,6 +445,9 @@ func confirmedOrderForCustomerQ(ctx context.Context, q querier, eventID string, 
 	return &ExistingOrderError{OrderID: id, Code: orderCode(number)}, nil
 }
 
+// nextOrderNumberQ trusts eventID: every caller reaches it through a draft whose
+// event was checked against the store in CommitDraft. A new caller must do the
+// same or order numbers will collide across stores.
 func nextOrderNumberQ(ctx context.Context, q querier, eventID string) (int, error) {
 	var number int
 	if err := q.QueryRowContext(ctx,
@@ -454,6 +457,7 @@ func nextOrderNumberQ(ctx context.Context, q querier, eventID string) (int, erro
 	return number, nil
 }
 
+// validateDraftItem trusts eventID for the same reason as nextOrderNumberQ.
 func validateDraftItem(ctx context.Context, q querier, eventID string, item DraftItem) error {
 	if item.Quantity <= 0 {
 		return fmt.Errorf("invalid quantity for %q", item.Name)

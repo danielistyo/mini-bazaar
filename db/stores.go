@@ -17,6 +17,8 @@ var (
 	ErrClaimInvalid = errors.New("claim code is invalid")
 	// ErrStoreCodeTaken means the store code is already registered.
 	ErrStoreCodeTaken = errors.New("store code already exists")
+	// ErrAlreadyMember means the caller already belongs to a store.
+	ErrAlreadyMember = errors.New("caller already belongs to a store")
 )
 
 // Role is how much of a store a caller may operate.
@@ -115,19 +117,44 @@ func (d *DB) CreateStoreWithOrganizer(ctx context.Context, code, name, channel, 
 		return nil, fmt.Errorf("store id: %w", err)
 	}
 
-	res, err = tx.ExecContext(ctx, `INSERT INTO accounts (created_at) VALUES (?)`, now)
-	if err != nil {
-		return nil, fmt.Errorf("insert account: %w", err)
-	}
-	accountID, err := res.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("account id: %w", err)
+	// One store per person: an identity that already has an active membership
+	// cannot create another store.
+	var member int
+	err = tx.QueryRowContext(ctx, `
+		SELECT 1 FROM account_channels ac
+		  JOIN store_members m ON m.account_id = ac.account_id
+		 WHERE ac.channel = ? AND ac.ref = ? AND ac.status = 'active' AND m.status = 'active'`,
+		channel, senderRef).Scan(&member)
+	switch {
+	case err == nil:
+		return nil, ErrAlreadyMember
+	case !errors.Is(err, sql.ErrNoRows):
+		return nil, fmt.Errorf("check existing membership: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO account_channels (account_id, channel, ref, status, created_at)
-		 VALUES (?, ?, ?, 'active', ?)`, accountID, channel, senderRef, now); err != nil {
-		return nil, fmt.Errorf("link channel identity: %w", err)
+	var accountID int64
+	err = tx.QueryRowContext(ctx,
+		`SELECT account_id FROM account_channels WHERE channel = ? AND ref = ?`,
+		channel, senderRef).Scan(&accountID)
+	switch {
+	case err == nil:
+		// identity exists but has no active store; reuse it
+	case errors.Is(err, sql.ErrNoRows):
+		res, err := tx.ExecContext(ctx, `INSERT INTO accounts (created_at) VALUES (?)`, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert account: %w", err)
+		}
+		accountID, err = res.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("account id: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO account_channels (account_id, channel, ref, status, created_at)
+			 VALUES (?, ?, ?, 'active', ?)`, accountID, channel, senderRef, now); err != nil {
+			return nil, fmt.Errorf("link channel identity: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("read channel identity: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO store_members (store_id, account_id, role, status, created_at, activated_at)
