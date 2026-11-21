@@ -31,7 +31,8 @@ func main() {
 
 	switch os.Args[1] {
 	case "serve":
-		serve(serveDBPath(os.Args[2:], dbPath))
+		path, pilot := serveFlags(os.Args[2:], dbPath)
+		serve(path, pilot)
 	case "init":
 		initDB(dbPath)
 	case "seed-menu":
@@ -45,20 +46,22 @@ func main() {
 	}
 }
 
-func serveDBPath(args []string, fallback string) string {
+func serveFlags(args []string, fallback string) (string, string) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	dbPath := fs.String("db", fallback, "SQLite database path")
+	path := fs.String("db", fallback, "SQLite database path")
+	pilot := fs.String("pilot-store", "", "single-store mode before the runtime injects context; must be removed once it does")
 	if err := fs.Parse(args); err != nil {
 		fatal("parse serve flags: " + err.Error())
 	}
-	return *dbPath
+	return *path, *pilot
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: bazaar-mcp <serve|init|seed-menu <menu.csv>>")
+	fmt.Fprintln(os.Stderr, "usage: bazaar-mcp <serve [--db PATH] [--pilot-store CODE]|init|seed-menu <menu.csv>>")
+	fmt.Fprintln(os.Stderr, "--pilot-store is a pilot-only escape hatch; it must not be used once the runtime injects context")
 }
 
-func serve(dbPath string) {
+func serve(dbPath, pilotStore string) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	d, err := db.Open(dbPath)
@@ -67,7 +70,17 @@ func serve(dbPath string) {
 	}
 	defer d.Close()
 
-	server := mcpserver.New(orders.New(d))
+	var pilot *db.Scope
+	if pilotStore != "" {
+		store, err := d.GetStoreByCode(context.Background(), pilotStore)
+		if err != nil {
+			fatal("pilot store: " + err.Error())
+		}
+		pilot = &db.Scope{StoreID: store.ID, Role: db.RoleOrganizer, Kind: db.PrincipalAccount}
+		slog.Error("PILOT MODE: every call without injected context acts as organizer; remove --pilot-store before production", "store", store.Code)
+	}
+
+	server := mcpserver.New(d, orders.New(d), pilot)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fatal("mcp server: " + err.Error())
 	}
@@ -80,13 +93,19 @@ func initDB(dbPath string) {
 	}
 	defer d.Close()
 
-	if err := orders.EnsureInitialEvent(context.Background(), d); err != nil {
+	store, err := d.GetStoreByCode(context.Background(), "KPKM")
+	if err != nil {
+		fatal("read default store: " + err.Error())
+	}
+	if err := orders.EnsureInitialEvent(context.Background(), d.ForStore(store.ID)); err != nil {
 		fatal("seed initial event: " + err.Error())
 	}
 	fmt.Println("initialized", dbPath)
 }
 
 func seedMenu(dbPath, menuPath string) {
+	// seed-menu is being sunset: products are added by chat prompt. It stays for
+	// the existing menu.csv until that file is removed.
 	d, err := db.Open(dbPath)
 	if err != nil {
 		fatal("open database: " + err.Error())

@@ -12,7 +12,7 @@ Bazar KPKM Order Assistant: a WhatsApp bot that records food and drink orders fo
 - **A local Go MCP server** owns the order logic and exposes tools over stdio.
 - **SQLite** is the single source of truth for events, customers, orders, payments, and history.
 
-Status: live on 2026-11-12. Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp Web is paired as `<bot-number>`, account display name `<bot-account>`, and patched to drop PM-WA commands. DMs are on; allowed groups are `Pengurus KPKM Awet Muda` and `Sie bazzar`. Target: **Bazar KPKM, Sunday 15 November 2026**. Menu: per event, backed by a shared catalog; the live event has 29 products.
+Status: single store live; multi-store model in progress (ADR 0001-0004, `docs/adr`). Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp Web is paired as `<bot-number>`, account display name `<bot-account>`, and patched to drop PM-WA commands. DMs are on; allowed groups are `Pengurus KPKM Awet Muda` and `Sie bazzar`. Target: **Bazar KPKM, Sunday 15 November 2026**. Menu: per event, backed by a shared catalog; the live event has 29 products.
 
 ## Hard rules
 
@@ -22,11 +22,11 @@ Status: live on 2026-11-12. Go MCP server seeded; ZeroClaw 0.9.0 with WhatsApp W
 4. Never hard-delete an Order. Cancellation is a status change; the order and its audit log stay.
 5. Every Order belongs to exactly one Event. Never mix events. If no event is named, use the Active Event and name it in the preview.
 6. Cutoff is informational. Never reject or delay an order because the cutoff passed.
-7. No WhatsApp JIDs or phone numbers in SQLite. Customers are names only. Similar names are confirmed, never merged silently.
+7. Channel identities (a WhatsApp number, a chat id) live only in `account_channels`, `store_groups` and `claims`, are opaque, and never appear in a reply or a log line. Customers are names only. Similar names are confirmed, never merged silently.
 8. Never invent a Product, price, or alias. Ambiguous product or customer means ask.
 9. One confirmed Order per (Event, Customer). A second request is an edit/append to the existing Order. A Cancelled Order does not block a new one.
 10. Payment is separate from order status. Editing a Paid Order resets it to Unpaid, and the preview says so.
-11. The WhatsApp group is a trusted team group. Confirmation is a UX guard, not a security boundary: the LLM supplies tool arguments, and ZeroClaw does not pass trusted sender identity to MCP tools.
+11. The store is resolved from the runtime, not from the model. ZeroClaw puts the caller's channel, chat and sender in the MCP request `_meta` under `id.bazaar/context`; the backend resolves store and role from it and refuses when it is missing. No tool takes a store or a role argument. Confirmation is still a UX guard.
 12. Text orders only. Images, voice notes, and quoted message text are not parsed by the WhatsApp adapter.
 
 ## Architecture
@@ -88,12 +88,22 @@ Tests sit next to the package they test (`db/db_test.go`, `orders/draft_test.go`
 - Table-driven tests in external `_test` packages; `t.TempDir()` for SQLite.
 - `go vet ./...` is the lint gate; `go test ./...` is the test gate.
 
+## Stores and access
+
+- A **Store** is one business: its own events, menu and customers. Nothing in one store is visible to another.
+- A **Role** is `organizer` or `staff`. Organizer changes the store, its menu, its events and access. Staff take, edit, cancel and settle orders. A tool missing from the role table is denied.
+- Access is granted to a chat (`store_groups`) or to a person (`account_channels` + `store_members`). A bound group acts with the role on the binding; a direct message acts with the person's membership. An unbound group is refused, never defaulted.
+- One store per chat, one store per person. A second store needs a second identity.
+- **Claim code**: 6 characters, one use, 15 minutes. `create_group_claim` (DM only) issues it; `redeem_group_claim` redeems it in the target group. Store creation is DM only too.
+- Which store a message belongs to comes from the runtime, not from the model: `_meta["id.bazaar/context"]` carries channel, chat and sender. No tool accepts a store or role argument.
+- `serve --pilot-store CODE` exists only for the window before the runtime injects context. It makes every call an organizer of that store; it must be removed once the patch lands, and it logs at error level.
+
 ## Domain rules
 
 ### Events
 
 - Initial event: code `BAZAR-2026-11-15`, name "Bazar KPKM", date `2026-11-15` (Sunday), cutoff `2026-11-14T12:00:00+07:00` (Saturday noon). Cutoff is displayed only.
-- Exactly one Active Event at a time. New orders default to it.
+- Exactly one Active Event per store. New orders default to their store's active event.
 - `create_event` creates an inactive event and copies the active event's listed menu at the active event's prices. `set_active_event` switches the active event; the bot announces the new one.
 - Drafts store their event at creation, so switching events cannot move an in-flight draft.
 - Test events are normal events. Their orders never appear in another event's summary.
@@ -101,7 +111,7 @@ Tests sit next to the package they test (`db/db_test.go`, `orders/draft_test.go`
 ### Menu
 
 - Each event has its own menu. Products belong to a shared catalog (name, category, aliases); price and listing live in `event_products` per event.
-- Seed data lives in `menu.csv` (`category,name,price,aliases`). `make seed-menu` applies the CSV to the Active Event, not to every event. Cincau Station is split into four flavors: Gurin, Orenji, Original, Honey Lime (Rp12.000 each), so a flavor can sell out independently.
+- Products are added by chat prompt (`upsert_product`), one at a time, then confirmed. Seeding from `menu.csv` still works for the existing event but is being sunset; do not add new data through it. Cincau Station is split into four flavors: Gurin, Orenji, Original, Honey Lime (Rp12.000 each), so a flavor can sell out independently.
 - The live event has 29 products, including Lauk ayam mboksiah (Rp20.000).
 - The price is snapshotted when a Draft is created and carried into the confirmed Order. Later price changes, even in the same event, never alter existing Orders.
 - Aliases are suggestions shared across events. `find_product` returns candidates from the event's menu only; the bot asks when more than one matches.
@@ -213,6 +223,9 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 | `search_orders` | `keyword`, `event_id?` | Compact matches by customer, product, or order code. |
 | `mark_order_paid` | `order_id`, `paid` | Sets or clears paid state. Reversible, no draft. |
 | `get_summary` | `event_id?`, `customer?` | Per-customer orders, per-product quantities, Omzet, paid and unpaid totals, cancelled count. Returns formatted text plus structured numbers. |
+| `create_store` | `code`, `name` | Creates a store and makes the sender its organizer. Direct message only; one store per identity. |
+| `create_group_claim` | `role?` | Issues a 6-character one-time code for this store. Organizer, direct message only; the bot shows the code in DM only. |
+| `redeem_group_claim` | `code` | Binds the current group to the store named by the code. Refused in a direct message. |
 
 `items[]` entries are `{product_id, quantity, note?}`. Prices always come from the database, never from the model.
 
@@ -227,9 +240,9 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 5. The organizer replies `OK 4821`. `commit_draft` returns the receipt.
 6. If the customer already has an order, the bot offers to append through `create_edit_draft`.
 
-### Group: team member relays an order
+### Group: store member relays an order
 
-1. A team member forwards or posts the order text in the team group. It must name the customer, for example "Bu Ratna pesan sate 2".
+1. A store member forwards or posts the order text in the bound group. It must name the customer, for example "Bu Ratna pesan sate 2".
 2. The organizer replies to that message mentioning the bot: "@<bot-account> catat ini".
 3. ZeroClaw does not pass the quoted message. With `passive_group_context`, the bot reads the forwarded text from recent group history. If several recent order messages are plausible, it asks which one.
 4. The same draft and confirmation flow applies. Preview and receipt are visible to the group.
@@ -267,10 +280,10 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 - Mention handle: the bot account's WhatsApp display name is `<bot-account>`. In a group it is mentioned as `@<bot-account>`, and that name is what `mention_only = true` matches. A message without it is ignored, so examples in this repo write `@<bot-account>` rather than a literal name.
 - Groups: allowlist exactly two groups: `Pengurus KPKM Awet Muda` (`<group-jid>`) and `Sie bazzar` (`<group-jid>`). `group_policy = "allowlist"`, `mention_only = true`, `passive_group_context = true`, `max_history_messages = 50`.
 - DM: `dm_policy = "all"`. The bot shares the PM-WA WhatsApp account (`<bot-number>`), so the channel drops PM-WA command prefixes before the agent (see PM-WA coexistence below).
-- No sender allowlist inside the allowed groups: every member may operate the bot. No JID storage in SQLite.
+- No sender allowlist inside the allowed groups: every member of a bound group acts with that binding's role. Channel identities live only in the access tables (hard rule 7).
 - Model: OpenCode Go custom OpenAI-compatible provider (`custom.bazaar`), `deepseek-v4.1-flash` (DeepSeek V4.1 Flash 1017). Base URL per Go docs (`https://opencode.ai/inference/go/openai/v1`). API key from the environment or secret store, never in the repo.
-- Provider entry: `[providers.models.custom.bazaar]` in `zeroclaw/config.toml` (schema v3) with `uri`, `model`, `native_tools = true`, and `extra_headers.x-opencode-session`. Native tools reduce the system prompt from ~72k to ~7k chars and expose 17 function schemas.
-- Risk profile `bazaar`: `level = "full"`, `auto_approve = ["*"]`, and `allowed_tools` pinned to the 17 `bazaar__*` tools. This removes shell, filesystem, and every other built-in from the model.
+- Provider entry: `[providers.models.custom.bazaar]` in `zeroclaw/config.toml` (schema v3) with `uri`, `model`, `native_tools = true`, and `extra_headers.x-opencode-session`. Native tools reduce the system prompt from ~72k to ~7k chars and expose 20 function schemas.
+- Risk profile `bazaar`: `level = "full"`, `auto_approve = ["*"]`, and `allowed_tools` pinned to the 20 `bazaar__*` tools. This removes shell, filesystem, and every other built-in from the model.
 - MCP: stdio server spawned by ZeroClaw. Command `/home/<user>/bazaar-minggu/bin/bazaar-mcp`, args `["serve", "--db", "/home/<user>/bazaar-minggu/data/orders.db"]`. Grant the server through `mcp_bundles`.
 - Agent prompt: `prompts/system.md`, copied to `agent-workspace/IDENTITY.md`, encodes the Hard Rules, the confirmation protocol, ambiguity rules, and "relay formatted text, never calculate".
 
@@ -306,7 +319,7 @@ Steps:
 2. Build the MCP server: `make build` (`CGO_ENABLED=1 go build -o bin/bazaar-mcp ./cmd/bazaar-mcp`).
 3. Install ZeroClaw from source with the `whatsapp-web` feature. The prebuilt v0.8.7 tarball and .deb do **not** include WhatsApp Web (`zeroclaw channel list` says "configured, not compiled"). See the build note below.
 4. Write the ZeroClaw config: provider, MCP server, WhatsApp policies. Keep the Go API key in the secret store or environment.
-5. Seed the database: `make init` and `make seed-menu MENU=menu.csv`.
+5. Seed the database: `make init` (creates the schema and the KPKM store). Add products through chat; `make seed-menu MENU=menu.csv` still works but is sunset.
 6. Start a new tmux session named `bazaar`. Run ZeroClaw in the foreground with logs at `logs/zeroclaw.log`.
 7. Pair WhatsApp by scanning the QR from the bot account. Confirm the session path persists.
 8. Dry-run in a test event, then switch to `BAZAR-2026-11-15`.
@@ -375,8 +388,8 @@ Backup:
 - `make lint` runs `go vet ./...`.
 - `make test` runs `go test ./...`.
 - `make init` creates the schema and seeds `BAZAR-2026-11-15`.
-- `make seed-menu MENU=menu.csv` seeds products and aliases into the Active Event.
-- `make run` runs `BAZAAR_DB=data/orders.db ./bin/bazaar-mcp serve`.
+- `make seed-menu MENU=menu.csv` seeds products and aliases into the Active Event. Sunset: prefer `upsert_product` from chat.
+- `make run` runs `BAZAAR_DB=data/orders.db ./bin/bazaar-mcp serve`. Add `--pilot-store KPKM` only while the runtime does not inject context.
 
 Before finishing any change: lint, unit tests, and integration tests. Report the actual result of each check. Manual WhatsApp checks must be labeled manual, never implied to pass.
 

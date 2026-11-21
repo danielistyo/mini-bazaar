@@ -21,6 +21,7 @@ func setup(t *testing.T) (*db.DB, string) {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
+	d = d.ForStore(1)
 
 	ctx := context.Background()
 	eventID := "BAZAR-2026-11-15"
@@ -43,10 +44,13 @@ func setup(t *testing.T) (*db.DB, string) {
 	return d, eventID
 }
 
-func connect(t *testing.T, svc *orders.Service) *mcp.ClientSession {
+func connect(t *testing.T, d *db.DB, svc *orders.Service) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := mcpserver.New(svc)
+	// Pilot scope keeps these tests focused on tool behaviour; scope resolution
+	// has its own tests in db/stores_test.go and mcpserver/scope_test.go.
+	pilot := &db.Scope{StoreID: 1, Role: db.RoleOrganizer, Kind: db.PrincipalAccount}
+	server := mcpserver.New(d, svc, pilot)
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 
 	serverDone := make(chan error, 1)
@@ -84,14 +88,14 @@ func call(t *testing.T, session *mcp.ClientSession, name string, args map[string
 
 func TestToolsListAndOrderFlow(t *testing.T) {
 	d, _ := setup(t)
-	session := connect(t, orders.New(d))
+	session := connect(t, d, orders.New(d))
 
 	tools, err := session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(tools.Tools) != 17 {
-		t.Fatalf("tools = %d, want 17", len(tools.Tools))
+	if len(tools.Tools) != 20 {
+		t.Fatalf("tools = %d, want 20", len(tools.Tools))
 	}
 
 	events := call(t, session, "list_events", map[string]any{})
@@ -149,7 +153,7 @@ func TestToolsListAndOrderFlow(t *testing.T) {
 
 func TestMenuAdminTools(t *testing.T) {
 	d, _ := setup(t)
-	session := connect(t, orders.New(d))
+	session := connect(t, d, orders.New(d))
 
 	added := call(t, session, "upsert_product", map[string]any{
 		"name":     "Lauk ayam mboksiah",
@@ -223,7 +227,7 @@ func TestMenuAdminTools(t *testing.T) {
 
 func TestToolErrorIsStructured(t *testing.T) {
 	d, _ := setup(t)
-	session := connect(t, orders.New(d))
+	session := connect(t, d, orders.New(d))
 
 	res := call(t, session, "find_customer", map[string]any{"name": ""})
 	if res["ok"] != false {

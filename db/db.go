@@ -37,13 +37,31 @@ func (e *SoldOutError) Error() string {
 	return "product sold out: " + e.ProductName
 }
 
-// DB wraps the SQLite connection.
+// DB wraps the SQLite connection. storeID is the tenant every query is bounded
+// to; zero means unscoped, and unscoped queries return nothing.
 type DB struct {
-	sql *sql.DB
+	sql     *sql.DB
+	storeID int64
 }
 
-// Open opens the database, enables WAL, and runs migrations.
-func Open(path string) (*DB, error) {
+// ForStore returns a handle bounded to one store. It shares the connection.
+func (d *DB) ForStore(id int64) *DB {
+	c := *d
+	c.storeID = id
+	return &c
+}
+
+// StoreID is the store this handle is bounded to, zero when unscoped.
+func (d *DB) StoreID() int64 { return d.storeID }
+
+// Open opens the database, enables WAL, and runs every migration.
+func Open(path string) (*DB, error) { return open(path, latestVersion) }
+
+// MigrateTo opens the database but stops migrating at version. Tests use it to
+// build an older schema before checking an upgrade.
+func MigrateTo(path string, version int) (*DB, error) { return open(path, version) }
+
+func open(path string, maxVersion int) (*DB, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create db dir: %w", err)
@@ -63,7 +81,7 @@ func Open(path string) (*DB, error) {
 	}
 
 	d := &DB{sql: sqlDB}
-	if err := d.migrate(); err != nil {
+	if err := d.migrateTo(maxVersion); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

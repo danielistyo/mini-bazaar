@@ -88,6 +88,9 @@ that scenario `blocked`, not failed.
 
 ## Scenario index
 
+`ZeroClaw patch` means the identity injection from ZeroClaw patch. `0002`, `0003` and
+`0004` name the other ADRs.
+
 `pos` is a case that must work. `neg` is a case that must be refused. `edge` is a
 case where both outcomes are defensible but only one is correct here.
 
@@ -155,7 +158,7 @@ case where both outcomes are defensible but only one is correct here.
 | E2E-O14 | pos | search by customer, by product, by code | compact matches | each result set matches SQL |
 | E2E-O15 | neg | `catat Budi sate 0` | refused | no draft |
 | E2E-O16 | edge | remove the item between preview and `OK` | commit refused with the item named | no order row |
-| E2E-O17 | neg | an event id from another store | not found (ADR 0001, 0002) | no row |
+| E2E-O17 | neg | an event id from another store | not found (ZeroClaw patch, 0002) | no row |
 
 ### Payment
 
@@ -282,7 +285,7 @@ One line per scenario, nothing summarised away:
 
 ```
 E2E-O1   pass     2026-11-21 14:02 WIB  Sie bazzar  "#BK-007 ... OK 4821"   assert: 1 row
-E2E-A3   blocked  needs ADR 0001, 0004
+E2E-A3   blocked  needs ZeroClaw patch, 0004
 E2E-X2   pass     voice note -> asked for text
 E2E-M10  fail     commit succeeded for a sold-out item, order 12 written
 ```

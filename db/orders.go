@@ -70,11 +70,19 @@ func (d *DB) CommitDraft(ctx context.Context, draftID string, now int64) (*Order
 	if err != nil {
 		return nil, err
 	}
+	var owner int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM bazaar_events WHERE id = ? AND store_id = ?`, draft.EventID, d.storeID).Scan(&owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("check draft event: %w", err)
+	}
 	if draft.Status == "committed" {
 		if draft.OrderID == nil {
 			return nil, fmt.Errorf("draft %s committed without an order", draftID)
 		}
-		return getOrderDetailQ(ctx, tx, *draft.OrderID)
+		return getOrderDetailQ(ctx, tx, d.storeID, *draft.OrderID)
 	}
 	if draft.Status == "expired" {
 		return nil, ErrDraftExpired
@@ -92,7 +100,7 @@ func (d *DB) CommitDraft(ctx context.Context, draftID string, now int64) (*Order
 	var orderID int64
 	switch draft.Kind {
 	case "create":
-		orderID, err = commitCreate(ctx, tx, draft, now)
+		orderID, err = commitCreate(ctx, tx, d.storeID, draft, now)
 	case "edit":
 		orderID, err = commitEdit(ctx, tx, draft, now)
 	case "cancel":
@@ -118,7 +126,7 @@ func (d *DB) CommitDraft(ctx context.Context, draftID string, now int64) (*Order
 		return nil, ErrDraftNotPending
 	}
 
-	order, err := getOrderDetailQ(ctx, tx, orderID)
+	order, err := getOrderDetailQ(ctx, tx, d.storeID, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +136,7 @@ func (d *DB) CommitDraft(ctx context.Context, draftID string, now int64) (*Order
 	return order, nil
 }
 
-func commitCreate(ctx context.Context, tx *sql.Tx, draft *Draft, now int64) (int64, error) {
+func commitCreate(ctx context.Context, tx *sql.Tx, storeID int64, draft *Draft, now int64) (int64, error) {
 	var payload DraftPayload
 	if err := json.Unmarshal([]byte(draft.Payload), &payload); err != nil {
 		return 0, fmt.Errorf("decode draft payload: %w", err)
@@ -140,7 +148,7 @@ func commitCreate(ctx context.Context, tx *sql.Tx, draft *Draft, now int64) (int
 	var customer *Customer
 	var err error
 	if draft.CustomerID != nil {
-		customer, err = getCustomerByID(ctx, tx, *draft.CustomerID)
+		customer, err = getCustomerByID(ctx, tx, storeID, *draft.CustomerID)
 	} else {
 		if draft.CustomerName == nil || strings.TrimSpace(*draft.CustomerName) == "" {
 			return 0, fmt.Errorf("draft has no customer")
@@ -149,9 +157,9 @@ func commitCreate(ctx context.Context, tx *sql.Tx, draft *Draft, now int64) (int
 		if normalized == "" {
 			return 0, fmt.Errorf("customer name normalizes to empty")
 		}
-		customer, err = getCustomerByNormalized(ctx, tx, normalized)
+		customer, err = getCustomerByNormalized(ctx, tx, storeID, normalized)
 		if errors.Is(err, ErrNotFound) {
-			customer, err = createCustomer(ctx, tx, strings.TrimSpace(*draft.CustomerName), normalized, now)
+			customer, err = createCustomer(ctx, tx, storeID, strings.TrimSpace(*draft.CustomerName), normalized, now)
 		}
 	}
 	if err != nil {
@@ -329,7 +337,10 @@ func (d *DB) SetOrderPaid(ctx context.Context, orderID int64, paid bool, now int
 	defer func() { _ = tx.Rollback() }()
 
 	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT status FROM orders WHERE id = ?`, orderID).Scan(&status); err != nil {
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status FROM orders
+		 WHERE id = ? AND event_id IN (SELECT id FROM bazaar_events WHERE store_id = ?)`,
+		orderID, d.storeID).Scan(&status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -355,7 +366,7 @@ func (d *DB) SetOrderPaid(ctx context.Context, orderID int64, paid bool, now int
 		return nil, err
 	}
 
-	order, err := getOrderDetailQ(ctx, tx, orderID)
+	order, err := getOrderDetailQ(ctx, tx, d.storeID, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +378,7 @@ func (d *DB) SetOrderPaid(ctx context.Context, orderID int64, paid bool, now int
 
 // GetOrderDetail returns a full order.
 func (d *DB) GetOrderDetail(ctx context.Context, orderID int64) (*OrderDetail, error) {
-	return getOrderDetailQ(ctx, d.sql, orderID)
+	return getOrderDetailQ(ctx, d.sql, d.storeID, orderID)
 }
 
 // GetOrderIDByRef resolves "#BK-001", "BK-001", or an internal id within an event.
@@ -378,7 +389,11 @@ func (d *DB) GetOrderIDByRef(ctx context.Context, eventID, ref string) (int64, e
 	}
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		var found int64
-		err := d.sql.QueryRowContext(ctx, `SELECT id FROM orders WHERE id = ? AND event_id = ?`, id, eventID).Scan(&found)
+		err := d.sql.QueryRowContext(ctx, `
+			SELECT id FROM orders
+			 WHERE id = ? AND event_id = ?
+			   AND event_id IN (SELECT id FROM bazaar_events WHERE store_id = ?)`,
+			id, eventID, d.storeID).Scan(&found)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return 0, ErrNotFound
@@ -396,7 +411,11 @@ func (d *DB) GetOrderIDByRef(ctx context.Context, eventID, ref string) (int64, e
 		return 0, ErrNotFound
 	}
 	var found int64
-	err = d.sql.QueryRowContext(ctx, `SELECT id FROM orders WHERE event_id = ? AND order_number = ?`, eventID, number).Scan(&found)
+	err = d.sql.QueryRowContext(ctx, `
+		SELECT id FROM orders
+		 WHERE event_id = ? AND order_number = ?
+		   AND event_id IN (SELECT id FROM bazaar_events WHERE store_id = ?)`,
+		eventID, number, d.storeID).Scan(&found)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, ErrNotFound
@@ -426,6 +445,9 @@ func confirmedOrderForCustomerQ(ctx context.Context, q querier, eventID string, 
 	return &ExistingOrderError{OrderID: id, Code: orderCode(number)}, nil
 }
 
+// nextOrderNumberQ trusts eventID: every caller reaches it through a draft whose
+// event was checked against the store in CommitDraft. A new caller must do the
+// same or order numbers will collide across stores.
 func nextOrderNumberQ(ctx context.Context, q querier, eventID string) (int, error) {
 	var number int
 	if err := q.QueryRowContext(ctx,
@@ -435,6 +457,7 @@ func nextOrderNumberQ(ctx context.Context, q querier, eventID string) (int, erro
 	return number, nil
 }
 
+// validateDraftItem trusts eventID for the same reason as nextOrderNumberQ.
 func validateDraftItem(ctx context.Context, q querier, eventID string, item DraftItem) error {
 	if item.Quantity <= 0 {
 		return fmt.Errorf("invalid quantity for %q", item.Name)
@@ -474,7 +497,7 @@ func productAvailabilityQ(ctx context.Context, q querier, eventID string, produc
 	return name, price, intToBool(available), nil
 }
 
-func getOrderDetailQ(ctx context.Context, q querier, orderID int64) (*OrderDetail, error) {
+func getOrderDetailQ(ctx context.Context, q querier, storeID, orderID int64) (*OrderDetail, error) {
 	var o OrderDetail
 	var number int
 	var isPaid int
@@ -485,7 +508,7 @@ func getOrderDetailQ(ctx context.Context, q querier, orderID int64) (*OrderDetai
 		  FROM orders o
 		  JOIN customers c ON c.id = o.customer_id
 		  JOIN bazaar_events e ON e.id = o.event_id
-		 WHERE o.id = ?`, orderID).
+		 WHERE o.id = ? AND e.store_id = ?`, orderID, storeID).
 		Scan(&o.ID, &o.EventID, &o.EventName, &o.EventDate, &o.CustomerID, &o.CustomerName,
 			&number, &o.Status, &isPaid, &o.PaidAt, &notes, &o.CreatedAt, &o.UpdatedAt, &o.CancelledAt)
 	if err != nil {
@@ -542,14 +565,15 @@ func (d *DB) SearchOrders(ctx context.Context, eventID, keyword string) ([]Order
 		  LEFT JOIN order_items oi ON oi.order_id = o.id
 		  LEFT JOIN products p ON p.id = oi.product_id
 		  LEFT JOIN product_aliases a ON a.product_id = p.id
-		 WHERE o.event_id = ?
+		 JOIN bazaar_events e ON e.id = o.event_id
+		 WHERE o.event_id = ? AND e.store_id = ?
 		   AND (c.normalized_name LIKE '%' || ? || '%'
 		        OR p.normalized_name LIKE '%' || ? || '%'
 		        OR a.normalized_alias LIKE '%' || ? || '%'
 		        OR ('BK-' || printf('%03d', o.order_number)) LIKE '%' || ? || '%')
 		 ORDER BY o.order_number
 		 LIMIT 20`,
-		eventID, nameTerm, prodTerm, prodTerm, rawTerm)
+		eventID, d.storeID, nameTerm, prodTerm, prodTerm, rawTerm)
 	if err != nil {
 		return nil, fmt.Errorf("search orders: %w", err)
 	}

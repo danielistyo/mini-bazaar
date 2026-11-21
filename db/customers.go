@@ -17,9 +17,10 @@ func (d *DB) FindCustomers(ctx context.Context, normalized string) ([]CustomerMa
 		       (SELECT COUNT(*) FROM orders o
 		         WHERE o.customer_id = c.id AND o.status = 'confirmed') AS order_count
 		  FROM customers c
-		 WHERE c.normalized_name = ? OR c.normalized_name LIKE '%' || ? || '%'
+		 WHERE c.store_id = ?
+		   AND (c.normalized_name = ? OR c.normalized_name LIKE '%' || ? || '%')
 		 ORDER BY CASE WHEN c.normalized_name = ? THEN 0 ELSE 1 END, c.display_name
-		 LIMIT 10`, normalized, normalized, normalized)
+		 LIMIT 10`, d.storeID, normalized, normalized, normalized)
 	if err != nil {
 		return nil, fmt.Errorf("find customers: %w", err)
 	}
@@ -41,13 +42,13 @@ func (d *DB) FindCustomers(ctx context.Context, normalized string) ([]CustomerMa
 
 // GetCustomer returns one customer by id.
 func (d *DB) GetCustomer(ctx context.Context, id int64) (*Customer, error) {
-	return getCustomerByID(ctx, d.sql, id)
+	return getCustomerByID(ctx, d.sql, d.storeID, id)
 }
 
-func getCustomerByID(ctx context.Context, q querier, id int64) (*Customer, error) {
+func getCustomerByID(ctx context.Context, q querier, storeID, id int64) (*Customer, error) {
 	var c Customer
 	err := q.QueryRowContext(ctx,
-		`SELECT id, display_name, normalized_name, created_at FROM customers WHERE id = ?`, id).
+		`SELECT id, display_name, normalized_name, created_at FROM customers WHERE id = ? AND store_id = ?`, id, storeID).
 		Scan(&c.ID, &c.DisplayName, &c.NormalizedName, &c.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -58,10 +59,10 @@ func getCustomerByID(ctx context.Context, q querier, id int64) (*Customer, error
 	return &c, nil
 }
 
-func getCustomerByNormalized(ctx context.Context, q querier, normalized string) (*Customer, error) {
+func getCustomerByNormalized(ctx context.Context, q querier, storeID int64, normalized string) (*Customer, error) {
 	var c Customer
 	err := q.QueryRowContext(ctx,
-		`SELECT id, display_name, normalized_name, created_at FROM customers WHERE normalized_name = ?`, normalized).
+		`SELECT id, display_name, normalized_name, created_at FROM customers WHERE normalized_name = ? AND store_id = ?`, normalized, storeID).
 		Scan(&c.ID, &c.DisplayName, &c.NormalizedName, &c.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -72,11 +73,11 @@ func getCustomerByNormalized(ctx context.Context, q querier, normalized string) 
 	return &c, nil
 }
 
-func createCustomer(ctx context.Context, q querier, displayName, normalized string, now int64) (*Customer, error) {
+func createCustomer(ctx context.Context, q querier, storeID int64, displayName, normalized string, now int64) (*Customer, error) {
 	if _, err := q.ExecContext(ctx,
-		`INSERT INTO customers (display_name, normalized_name, created_at) VALUES (?, ?, ?)
-		 ON CONFLICT(normalized_name) DO NOTHING`, displayName, normalized, now); err != nil {
+		`INSERT INTO customers (store_id, display_name, normalized_name, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(store_id, normalized_name) DO NOTHING`, storeID, displayName, normalized, now); err != nil {
 		return nil, fmt.Errorf("create customer: %w", err)
 	}
-	return getCustomerByNormalized(ctx, q, normalized)
+	return getCustomerByNormalized(ctx, q, storeID, normalized)
 }
