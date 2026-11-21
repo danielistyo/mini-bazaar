@@ -13,7 +13,7 @@ func TestCreateStore(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := setup(t)
 
-	res, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "628222@s.whatsapp.net", "warteg", "Warteg Bu Tini")
+	res, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "warteg", "Warteg Bu Tini")
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestCreateStore(t *testing.T) {
 		t.Fatal("formatted reply is empty")
 	}
 
-	if _, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "628222@s.whatsapp.net", "WARTEG", "Again"); err == nil {
+	if _, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "WARTEG", "Again"); err == nil {
 		t.Fatal("want conflict for a duplicate code")
 	} else {
 		var oe *orders.Error
@@ -33,7 +33,7 @@ func TestCreateStore(t *testing.T) {
 		}
 	}
 
-	if _, err := svc.CreateStore(ctx, "", "", "", "X", "Y"); err == nil {
+	if _, err := svc.CreateStore(ctx, "", "", "X", "Y"); err == nil {
 		t.Fatal("want refusal without a sender")
 	}
 }
@@ -42,7 +42,7 @@ func TestGroupClaimFlow(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := setup(t)
 
-	store, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "628222@s.whatsapp.net", "warteg", "Warteg")
+	store, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "warteg", "Warteg")
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestGroupClaimFlow(t *testing.T) {
 		t.Fatalf("claim = %+v", claim)
 	}
 
-	bound, err := svc.RedeemGroupClaim(ctx, claim.Code, "whatsapp", "120363041234567890@g.us", "628333@s.whatsapp.net")
+	bound, err := svc.RedeemGroupClaim(ctx, claim.Code, "whatsapp", "120363041234567890@g.us")
 	if err != nil {
 		t.Fatalf("redeem: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestGroupClaimFlow(t *testing.T) {
 
 	// The same code is dead, and it fails the same way an unknown one does.
 	for _, code := range []string{claim.Code, "ZZZZZZ"} {
-		if _, err := svc.RedeemGroupClaim(ctx, code, "whatsapp", "120363049999999999@g.us", "628333@s.whatsapp.net"); err == nil {
+		if _, err := svc.RedeemGroupClaim(ctx, code, "whatsapp", "120363049999999999@g.us"); err == nil {
 			t.Fatalf("code %q redeemed twice", code)
 		} else {
 			var oe *orders.Error
@@ -108,22 +108,11 @@ func TestForStoreKeepsReceiver(t *testing.T) {
 	var _ = db.RoleStaff
 }
 
-func TestStoreAdminIsDirectOnly(t *testing.T) {
+func TestRedeemNeedsAChat(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := setup(t)
 
-	// A group chat is not a person: store creation is refused there.
-	if _, err := svc.CreateStore(ctx, "whatsapp", "120363041234567890@g.us", "628222@s.whatsapp.net", "GRP", "From group"); err == nil {
-		t.Fatal("want refusal when creating a store from a group")
-	} else {
-		var oe *orders.Error
-		if !errors.As(err, &oe) || oe.Code != "not_allowed" {
-			t.Fatalf("err = %v, want not_allowed", err)
-		}
-	}
-
-	// A binding code must be redeemed in a group, not in a private chat.
-	res, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "628222@s.whatsapp.net", "DMONLY", "DM only")
+	res, err := svc.CreateStore(ctx, "whatsapp", "628222@s.whatsapp.net", "NOCHAT", "No chat")
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
@@ -131,13 +120,8 @@ func TestStoreAdminIsDirectOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if _, err := svc.RedeemGroupClaim(ctx, claim.Code, "whatsapp", "628222@s.whatsapp.net", "628222@s.whatsapp.net"); err == nil {
-		t.Fatal("want refusal when redeeming in a direct message")
-	} else {
-		var oe *orders.Error
-		if !errors.As(err, &oe) || oe.Code != "not_allowed" {
-			t.Fatalf("err = %v, want not_allowed", err)
-		}
+	if _, err := svc.RedeemGroupClaim(ctx, claim.Code, "whatsapp", ""); err == nil {
+		t.Fatal("want refusal when the chat is unknown")
 	}
 }
 
@@ -145,10 +129,10 @@ func TestCreateStoreRejectsSecondStore(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := setup(t)
 
-	if _, err := svc.CreateStore(ctx, "whatsapp", "628444@s.whatsapp.net", "628444@s.whatsapp.net", "ONE", "First"); err != nil {
+	if _, err := svc.CreateStore(ctx, "whatsapp", "628444@s.whatsapp.net", "ONE", "First"); err != nil {
 		t.Fatalf("first store: %v", err)
 	}
-	if _, err := svc.CreateStore(ctx, "whatsapp", "628444@s.whatsapp.net", "628444@s.whatsapp.net", "TWO", "Second"); err == nil {
+	if _, err := svc.CreateStore(ctx, "whatsapp", "628444@s.whatsapp.net", "TWO", "Second"); err == nil {
 		t.Fatal("want conflict for a second store")
 	} else {
 		var oe *orders.Error

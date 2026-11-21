@@ -94,7 +94,7 @@ Tests sit next to the package they test (`db/db_test.go`, `orders/draft_test.go`
 - A **Role** is `organizer` or `staff`. Organizer changes the store, its menu, its events and access. Staff take, edit, cancel and settle orders. A tool missing from the role table is denied.
 - Access is granted to a chat (`store_groups`) or to a person (`account_channels` + `store_members`). A bound group acts with the role on the binding; a direct message acts with the person's membership. An unbound group is refused, never defaulted.
 - One store per chat, one store per person. A second store needs a second identity.
-- **Claim code**: 6 characters, one use, 15 minutes. `create_group_claim` (DM only) issues it; `redeem_group_claim` redeems it in the target group. Store creation is DM only too.
+- **Claim code**: 6 characters, one use, 15 minutes. `create_group_claim` issues it; `redeem_group_claim` redeems it in the chat where the message was sent. Neither chat type is enforced: WhatsApp reports a direct message under a LID chat id that differs from the sender's JID, so group and DM cannot be told apart from the refs. The channel allowlist decides where the bot listens.
 - Which store a message belongs to comes from the runtime, not from the model: `_meta["id.bazaar/context"]` carries channel, chat and sender. No tool accepts a store or role argument.
 - `serve --pilot-store CODE` exists only for the window before the runtime injects context. It makes every call an organizer of that store; it must be removed once the patch lands, and it logs at error level.
 
@@ -223,9 +223,9 @@ All tools return `{ok: true, ...}` or `{ok: false, code, message}`. When a `form
 | `search_orders` | `keyword`, `event_id?` | Compact matches by customer, product, or order code. |
 | `mark_order_paid` | `order_id`, `paid` | Sets or clears paid state. Reversible, no draft. |
 | `get_summary` | `event_id?`, `customer?` | Per-customer orders, per-product quantities, Omzet, paid and unpaid totals, cancelled count. Returns formatted text plus structured numbers. |
-| `create_store` | `code`, `name` | Creates a store and makes the sender its organizer. Direct message only; one store per identity. |
-| `create_group_claim` | `role?` | Issues a 6-character one-time code for this store. Organizer, direct message only; the bot shows the code in DM only. |
-| `redeem_group_claim` | `code` | Binds the current group to the store named by the code. Refused in a direct message. |
+| `create_store` | `code`, `name` | Creates a store and makes the sender its organizer. One store per identity. |
+| `create_group_claim` | `role?` | Issues a 6-character one-time code for this store. Organizer only. |
+| `redeem_group_claim` | `code` | Binds the current chat to the store named by the code. |
 
 `items[]` entries are `{product_id, quantity, note?}`. Prices always come from the database, never from the model.
 

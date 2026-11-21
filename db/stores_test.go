@@ -108,7 +108,7 @@ func TestResolveScope(t *testing.T) {
 					t.Fatalf("revoke: %v", err)
 				}
 			},
-			chat: groupChat, sender: organizer,
+			chat: groupChat, sender: "628999@s.whatsapp.net",
 			wantErr: db.ErrNoStore,
 		},
 		{

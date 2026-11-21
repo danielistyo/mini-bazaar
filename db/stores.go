@@ -170,6 +170,11 @@ func (d *DB) CreateStoreWithOrganizer(ctx context.Context, code, name, channel, 
 
 // ResolveScope maps a caller to a store and a role. A bound chat wins over the
 // sender's own membership, so a group always acts as the group.
+//
+// Whether a chat is a group cannot be read from the refs: WhatsApp reports a
+// direct message under a LID chat id that differs from the sender's JID. The
+// channel allowlist decides where the bot listens at all, which is what keeps an
+// unbound group out.
 func (d *DB) ResolveScope(ctx context.Context, channel, chatRef, senderRef string) (*Scope, error) {
 	if chatRef != "" {
 		var storeID int64
@@ -195,12 +200,6 @@ func (d *DB) ResolveScope(ctx context.Context, channel, chatRef, senderRef strin
 	if senderRef == "" {
 		return nil, ErrNoStore
 	}
-	// A chat that is not a bound group and is not the sender's own 1:1 chat is
-	// somebody else's group. The sender's personal access must not leak into it.
-	if chatRef != "" && chatRef != senderRef {
-		return nil, ErrNoStore
-	}
-
 	var accountID, storeID int64
 	var role string
 	err := d.sql.QueryRowContext(ctx, `

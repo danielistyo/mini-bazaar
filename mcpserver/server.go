@@ -262,18 +262,14 @@ type redeemGroupClaimInput struct {
 
 func (h *handlers) createStore(ctx context.Context, req *mcp.CallToolRequest, in createStoreInput) (*mcp.CallToolResult, ToolOutput, error) {
 	cc := readCallContext(req)
-	res, err := h.svc.CreateStore(ctx, cc.Channel, cc.ChatRef, cc.SenderRef, in.Code, in.Name)
+	res, err := h.svc.CreateStore(ctx, cc.Channel, cc.SenderRef, in.Code, in.Name)
 	if err != nil {
 		return nil, fail(err), nil
 	}
 	return nil, ok(res.Formatted, res), nil
 }
 
-func (h *handlers) createGroupClaim(ctx context.Context, req *mcp.CallToolRequest, in createGroupClaimInput) (*mcp.CallToolResult, ToolOutput, error) {
-	cc := readCallContext(req)
-	if cc.ChatRef != "" && cc.ChatRef != cc.SenderRef {
-		return nil, fail(&orders.Error{Code: "not_allowed", Message: "Kode binding hanya dibuat dari chat pribadi."}), nil
-	}
+func (h *handlers) createGroupClaim(ctx context.Context, _ *mcp.CallToolRequest, in createGroupClaimInput) (*mcp.CallToolResult, ToolOutput, error) {
 	var accountID *int64
 	if sc, ok := ScopeFrom(ctx); ok {
 		accountID = sc.AccountID
@@ -287,7 +283,7 @@ func (h *handlers) createGroupClaim(ctx context.Context, req *mcp.CallToolReques
 
 func (h *handlers) redeemGroupClaim(ctx context.Context, req *mcp.CallToolRequest, in redeemGroupClaimInput) (*mcp.CallToolResult, ToolOutput, error) {
 	cc := readCallContext(req)
-	res, err := h.svc.RedeemGroupClaim(ctx, in.Code, cc.Channel, cc.ChatRef, cc.SenderRef)
+	res, err := h.svc.RedeemGroupClaim(ctx, in.Code, cc.Channel, cc.ChatRef)
 	if err != nil {
 		return nil, fail(err), nil
 	}
