@@ -61,14 +61,24 @@ pub fn turn_identity() -> Option<TurnIdentity> {
 }
 ```
 
-**2. `zeroclaw-channels/src/orchestrator/mod.rs`** — around the agent turn call
-in `run` / `process_message`, where `reply_target`, `sender` and `message_id` are
-already in scope, wrap it:
+**2. `zeroclaw-channels/src/orchestrator/mod.rs`** — the seam is the free async
+function `process_channel_message_body` (line 9281), which receives the message
+and awaits the whole turn. It is the only call site of
+`build_channel_turn_context_preamble` outside tests, and `msg.channel`,
+`msg.reply_target`, `msg.sender` are all in scope there.
+
+Set the identity as the first statement of that function, before the turn runs:
 
 ```rust
-let identity = TurnIdentity { channel, chat_ref: reply_target, sender_ref: sender };
-with_turn_identity(identity, async { /* existing turn call unchanged */ }).await
+zeroclaw_api::turn_identity::set_current(zeroclaw_api::turn_identity::TurnIdentity {
+    channel: msg.channel.as_str().to_string(),
+    chat_ref: msg.reply_target.clone(),
+    sender_ref: msg.sender.clone(),
+});
 ```
+
+No `.scope(...)` wrapper is needed: `set_current` records the identity against the
+current tokio task, and the tool calls are awaited inside that same task.
 
 **3. `zeroclaw-tools/src/mcp_tool.rs:88`** — read it and attach it:
 
@@ -114,6 +124,14 @@ env CARGO_BUILD_JOBS=1 \
 
 Roughly 15 minutes, mostly the WhatsApp stack. The running bot keeps the old
 binary until the tmux session is restarted.
+
+## If the DM says `no_store`
+
+The task id at the tool call did not match the one that received the message,
+which means the tool call runs in a spawned task. Do not add a "most recent
+identity" fallback: with two chats open it would attribute one store's message to
+the other. Instead, set the identity from inside the agent loop, where the tool is
+dispatched, or pass it through the `Tool` trait.
 
 ## Verify
 
