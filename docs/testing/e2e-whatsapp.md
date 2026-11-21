@@ -77,6 +77,26 @@ price the bot stored, never the price in this file.
 The same rule applies to a new event: it copies the active event's listed menu, so
 an event started after these adds already has them.
 
+## Backend scenarios without WhatsApp
+
+`scripts/e2e_backend.py` drives the real `bazaar-mcp` over stdio with the same
+`_meta` context the patched runtime sends, against a `VACUUM INTO` copy of
+production. It covers everything the backend can prove on its own:
+
+```
+scp scripts/e2e_backend.py <user>@<vps>:~ && ssh <user>@<vps> 'cd ~ && python3 e2e_backend.py'
+```
+
+Covered: unbound chat, missing context, staff read, staff denied on an organizer
+tool, organizer allowed, foreign event, DM resolution, foreign event from a DM,
+draft, wrong code, commit, idempotent commit, paid, unpaid, cancel, second
+cancel, summary arithmetic, claim issue, wrong code, redeem, claimed staff
+denied, reused code, second store.
+
+Not covered, and only testable over WhatsApp: mentions, images and voice notes,
+passive group context, PM-WA prefix coexistence, cross-channel confirm, and the
+restart between preview and confirm.
+
 ## Assertions
 
 ```sh
