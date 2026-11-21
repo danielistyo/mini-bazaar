@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"bazaar-minggu/db"
 	"bazaar-minggu/orders"
 )
 
@@ -111,7 +112,10 @@ type getSummaryInput struct {
 }
 
 type handlers struct {
-	svc *orders.Service
+	svc   *orders.Service
+	db    *db.DB
+	scope *db.Scope
+	pilot *db.Scope
 }
 
 func ok(formatted string, data any) ToolOutput {
@@ -127,103 +131,163 @@ func fail(err error) ToolOutput {
 	return ToolOutput{OK: false, Code: "internal", Message: "Terjadi kesalahan internal."}
 }
 
-// New builds the MCP server with all order tools.
-func New(svc *orders.Service) *mcp.Server {
-	h := &handlers{svc: svc}
+// New builds the MCP server with all order tools. pilot, when set, gives every
+// call without an injected context the same store and role; it exists only so the
+// bot keeps working before the runtime injects context, and must go afterwards.
+func New(d *db.DB, svc *orders.Service, pilot *db.Scope) *mcp.Server {
+	h := &handlers{svc: svc, db: d, pilot: pilot}
 	s := mcp.NewServer(&mcp.Implementation{Name: "bazaar-mcp", Version: "0.1.0"}, nil)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "list_events",
 		Description: "List all bazaar events with active flag, order count, and Omzet. Use before switching events.",
-	}, h.listEvents)
+	}, h, (*handlers).listEvents)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "create_event",
 		Description: "Create an inactive bazaar event. Use set_active_event to activate it. Never assume a date; ask the user.",
-	}, h.createEvent)
+	}, h, (*handlers).createEvent)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "set_active_event",
 		Description: "Activate one event. New orders default to the active event. Changing it does not move existing drafts.",
-	}, h.setActiveEvent)
+	}, h, (*handlers).setActiveEvent)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "get_menu",
 		Description: "Get products with category, price, per-event availability, and aliases. Defaults to the active event.",
-	}, h.getMenu)
+	}, h, (*handlers).getMenu)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "find_product",
 		Description: "Resolve a product name, alias, or typo. Returns candidates. Ask the user when more than one matches; never invent a product or price.",
-	}, h.findProduct)
+	}, h, (*handlers).findProduct)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "set_product_available",
 		Description: "Mark a product sold out or available for one event. Reversible. Use only after the user says it is habis or available again.",
-	}, h.setProductAvailable)
+	}, h, (*handlers).setProductAvailable)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name: "upsert_product",
 		Description: "Add or update a product on one event's menu. Only the organizer should use this, preferably in DM. " +
 			"Pass product_id to update; omit it to add. Prices and listing are per event; the catalog name, category, and aliases are shared. " +
 			"Show a preview and wait for OK before calling. Existing orders keep their snapshot.",
-	}, h.upsertProduct)
+	}, h, (*handlers).upsertProduct)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name: "set_product_enabled",
 		Description: "List or remove a product on one event's menu. Other events and order history stay. " +
 			"For temporary sold-out use set_product_available instead.",
-	}, h.setProductEnabled)
+	}, h, (*handlers).setProductEnabled)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "find_customer",
 		Description: "Find existing customers by name, including near matches such as Bu Susi vs Susi. Ask the user before reusing or creating a customer.",
-	}, h.findCustomer)
+	}, h, (*handlers).findCustomer)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name: "create_order_draft",
 		Description: "Prepare a new order without saving it. Resolve products with find_product and customers with find_customer first. " +
 			"Show the returned preview and wait for the user to reply OK <4-digit code> before commit_draft. " +
 			"Prices and totals come only from the database.",
-	}, h.createOrderDraft)
+	}, h, (*handlers).createOrderDraft)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name: "create_edit_draft",
 		Description: "Prepare a full replacement of an order's items. Show the before/after preview and wait for OK <4-digit code>. " +
 			"Editing a paid order resets it to unpaid.",
-	}, h.createEditDraft)
+	}, h, (*handlers).createEditDraft)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "create_cancel_draft",
 		Description: "Prepare a cancellation. Show the preview and wait for OK <4-digit code>. Cancellation is soft; the order stays in history.",
-	}, h.createCancelDraft)
+	}, h, (*handlers).createCancelDraft)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "commit_draft",
 		Description: "Apply a pending draft after the user explicitly replies OK <4-digit code>. Idempotent. Never call it on a plain yes.",
-	}, h.commitDraft)
+	}, h, (*handlers).commitDraft)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "get_order",
 		Description: "Get one order by code (#BK-001) or internal id, including items, total, status, and payment.",
-	}, h.getOrder)
+	}, h, (*handlers).getOrder)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "search_orders",
 		Description: "Find orders by customer, product, alias, or order code. Returns compact rows with internal ids.",
-	}, h.searchOrders)
+	}, h, (*handlers).searchOrders)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "mark_order_paid",
 		Description: "Mark an order paid or unpaid. Reversible and needs no draft. Omzet is separate from cash collected.",
-	}, h.markOrderPaid)
+	}, h, (*handlers).markOrderPaid)
 
-	mcp.AddTool(s, &mcp.Tool{
+	scopedTool(s, &mcp.Tool{
 		Name:        "get_summary",
 		Description: "Get per-customer orders, per-product quantities, Omzet, paid/unpaid totals, and cancelled count. Relay the formatted text verbatim; never recalculate.",
-	}, h.getSummary)
+	}, h, (*handlers).getSummary)
+
+	openTool(s, &mcp.Tool{
+		Name:        "create_store",
+		Description: "Create a store and make the sender its organizer. Only from a direct message. Ask for the store name and a short uppercase code first.",
+	}, h, (*handlers).createStore)
+
+	scopedTool(s, &mcp.Tool{
+		Name:        "create_group_claim",
+		Description: "Issue a one-time code that binds a group to this store. Relay the code to the organizer's direct message; never post it in the group yourself.",
+	}, h, (*handlers).createGroupClaim)
+
+	openTool(s, &mcp.Tool{
+		Name:        "redeem_group_claim",
+		Description: "Redeem a binding code in the group it was meant for. Call only when the message is in the target group and contains a bind code.",
+	}, h, (*handlers).redeemGroupClaim)
 
 	return s
+}
+
+type createStoreInput struct {
+	Code string `json:"code" jsonschema:"short uppercase store code, for example KPKM"`
+	Name string `json:"name" jsonschema:"store display name"`
+}
+
+type createGroupClaimInput struct {
+	Role string `json:"role,omitempty" jsonschema:"staff (default) or organizer"`
+}
+
+type redeemGroupClaimInput struct {
+	Code string `json:"code" jsonschema:"six character code from create_group_claim"`
+}
+
+func (h *handlers) createStore(ctx context.Context, req *mcp.CallToolRequest, in createStoreInput) (*mcp.CallToolResult, ToolOutput, error) {
+	cc := readCallContext(req)
+	res, err := h.svc.CreateStore(ctx, cc.Channel, cc.SenderRef, in.Code, in.Name)
+	if err != nil {
+		return nil, fail(err), nil
+	}
+	return nil, ok(res.Formatted, res), nil
+}
+
+func (h *handlers) createGroupClaim(ctx context.Context, _ *mcp.CallToolRequest, in createGroupClaimInput) (*mcp.CallToolResult, ToolOutput, error) {
+	var accountID *int64
+	if sc, ok := ScopeFrom(ctx); ok {
+		accountID = sc.AccountID
+	}
+	res, err := h.svc.CreateGroupClaim(ctx, accountID, in.Role)
+	if err != nil {
+		return nil, fail(err), nil
+	}
+	return nil, ok(res.Formatted, res), nil
+}
+
+func (h *handlers) redeemGroupClaim(ctx context.Context, req *mcp.CallToolRequest, in redeemGroupClaimInput) (*mcp.CallToolResult, ToolOutput, error) {
+	cc := readCallContext(req)
+	res, err := h.svc.RedeemGroupClaim(ctx, in.Code, cc.Channel, cc.ChatRef)
+	if err != nil {
+		return nil, fail(err), nil
+	}
+	return nil, ok(res.Formatted, res), nil
 }
 
 func (h *handlers) listEvents(ctx context.Context, _ *mcp.CallToolRequest, _ listEventsInput) (*mcp.CallToolResult, ToolOutput, error) {

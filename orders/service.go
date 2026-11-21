@@ -363,3 +363,98 @@ func (s *Service) storeDraft(ctx context.Context, draft db.Draft) (string, strin
 	}
 	return "", "", last
 }
+
+// ForStore returns a service bounded to one store. The receiver is unchanged.
+func (s *Service) ForStore(id int64) *Service {
+	c := *s
+	c.db = s.db.ForStore(id)
+	return &c
+}
+
+// StoreView is the reply for store and group-binding commands.
+type StoreView struct {
+	Store     *db.Store `json:"store,omitempty"`
+	Role      string    `json:"role,omitempty"`
+	Code      string    `json:"code,omitempty"`
+	ExpiresAt int64     `json:"expires_at,omitempty"`
+	Formatted string    `json:"formatted"`
+}
+
+const claimTTL = 15 * time.Minute
+
+// CreateStore registers a store and makes the caller its organizer.
+func (s *Service) CreateStore(ctx context.Context, channel, senderRef, code, name string) (*StoreView, error) {
+	if channel == "" || senderRef == "" {
+		return nil, errf("unauthorized", "Store baru hanya bisa dibuat dari chat pribadi.")
+	}
+	store, err := s.db.CreateStoreWithOrganizer(ctx, code, name, channel, senderRef, time.Now().Unix())
+	if errors.Is(err, db.ErrStoreCodeTaken) {
+		return nil, errf("conflict", "Kode store %s sudah dipakai.", strings.ToUpper(strings.TrimSpace(code)))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &StoreView{Store: store, Role: string(db.RoleOrganizer),
+		Formatted: fmt.Sprintf("Store %s dibuat. Kamu organizer di sana.", store.Code)}, nil
+}
+
+// CreateGroupClaim issues a one-time code that binds a chat to this store.
+func (s *Service) CreateGroupClaim(ctx context.Context, accountID *int64, role string) (*StoreView, error) {
+	storeID := s.db.StoreID()
+	r, err := parseRole(role)
+	if err != nil {
+		return nil, err
+	}
+	code, err := newClaimCode()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	expires := now.Add(claimTTL).Unix()
+	if err := s.db.CreateGroupClaim(ctx, storeID, r, accountID, code, now.Unix(), expires); err != nil {
+		return nil, err
+	}
+	return &StoreView{Role: string(r), Code: code, ExpiresAt: expires,
+		Formatted: fmt.Sprintf("Kirim ini ke grup tujuannya dalam 15 menit:\n\nbind %s", code)}, nil
+}
+
+// RedeemGroupClaim binds the current chat to the store named by the code.
+func (s *Service) RedeemGroupClaim(ctx context.Context, code, channel, chatRef string) (*StoreView, error) {
+	sc, err := s.db.RedeemGroupClaim(ctx, strings.ToUpper(strings.TrimSpace(code)), channel, chatRef, time.Now().Unix())
+	switch {
+	case errors.Is(err, db.ErrClaimInvalid):
+		return nil, errf("claim_invalid", "Kode tidak valid atau sudah kedaluwarsa.")
+	case errors.Is(err, db.ErrStoreSuspended):
+		return nil, errf("store_suspended", "Store sedang tidak aktif.")
+	case err != nil:
+		return nil, err
+	}
+	store, err := s.db.GetStore(ctx, sc.StoreID)
+	if err != nil {
+		return nil, err
+	}
+	return &StoreView{Store: store, Role: string(sc.Role),
+		Formatted: fmt.Sprintf("Grup terhubung ke %s (%s).", store.Code, sc.Role)}, nil
+}
+
+func parseRole(s string) (db.Role, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "staff":
+		return db.RoleStaff, nil
+	case "organizer":
+		return db.RoleOrganizer, nil
+	}
+	return "", errf("invalid_input", "Role harus staff atau organizer.")
+}
+
+func newClaimCode() (string, error) {
+	var raw [6]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	out := make([]byte, len(raw))
+	for i, b := range raw {
+		out[i] = crockford[int(b)%len(crockford)]
+	}
+	return string(out), nil
+}

@@ -20,6 +20,7 @@ func seedFile(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	d = d.ForStore(1)
 	ctx := context.Background()
 	if err := d.CreateEvent(ctx, db.Event{
 		ID:        "BAZAR-2026-11-15",
@@ -48,7 +49,7 @@ func TestStdioServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "go", "run", "../cmd/bazaar-mcp", "serve")
+	cmd := exec.CommandContext(ctx, "go", "run", "../cmd/bazaar-mcp", "serve", "--pilot-store", "KPKM")
 	cmd.Env = append(os.Environ(), "BAZAAR_DB="+path)
 	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-test", Version: "0.1.0"}, nil)
 	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
@@ -61,8 +62,8 @@ func TestStdioServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(tools.Tools) != 17 {
-		t.Fatalf("tools = %d, want 17", len(tools.Tools))
+	if len(tools.Tools) != 20 {
+		t.Fatalf("tools = %d, want 20", len(tools.Tools))
 	}
 
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{

@@ -18,10 +18,10 @@ come from ZeroClaw, not from a new gateway in front of it.
 
 1. ZeroClaw knows, for every message, the channel, the chat and the sender. For
    WhatsApp and Telegram it already parses those fields.
-2. Before every MCP tool call, ZeroClaw injects them as one reserved field into
-   the arguments: `_bazaar_ctx = {channel, chat_ref, sender_ref}`.
-3. The field is written after the model's arguments are parsed, so the model can
-   neither supply it nor overwrite it.
+2. Before every MCP tool call, ZeroClaw injects them into the request `_meta`
+   under `id.bazaar/context`: `{channel, chat_ref, sender_ref}`.
+3. `_meta` is written by the transport, outside the tool arguments, so the model
+   can neither supply it nor overwrite it.
 4. `bazaar-mcp` resolves that triple to a store and a role from `store_groups`
    and `account_channels` + `store_members`.
 5. No tool takes a `store` or a `role` argument. Every query carries
@@ -42,7 +42,7 @@ Three touch points in ZeroClaw, all already carrying the values:
 | Step | Where | Change |
 |---|---|---|
 | turn preamble already has `reply_target`, `sender`, `message_id` | `crates/zeroclaw-channels/src/orchestrator/mod.rs:2438` | nothing, it proves the values are in scope |
-| tool dispatch | `crates/zeroclaw-tools/src/mcp_tool.rs:96` | merge `_bazaar_ctx` into `args` before dispatch |
+| tool dispatch | `crates/zeroclaw-tools/src/mcp_tool.rs:96` | attach `_meta` to the request |
 | request serialization | `crates/zeroclaw-tools/src/mcp_client.rs:745`, `:870` | pass the field through untouched |
 | channel identity | `telegram.rs:241,244`, `whatsapp_web.rs` | already parsed |
 
@@ -58,13 +58,13 @@ flowchart LR
         WA["WhatsApp Web"]
         TG["Telegram (later)"]
     end
-    ZC["ZeroClaw<br/>mention gate, passive context,<br/>LLM, injects _bazaar_ctx"]
+    ZC["ZeroClaw<br/>mention gate, passive context,<br/>LLM, injects identity"]
     BE["bazaar-mcp<br/>resolve scope, role matrix,<br/>WHERE store_id = ?"]
     DB[("SQLite")]
 
     WA --> ZC
     TG --> ZC
-    ZC -->|"tools/call + _bazaar_ctx"| BE
+    ZC -->|"tools/call + identity"| BE
     BE --> DB
 ```
 
@@ -79,7 +79,7 @@ sequenceDiagram
     M->>ZC: catat Bu Ratna sate 2
     Note over ZC: chat_ref + sender_ref from the channel
     ZC->>ZC: LLM picks create_order_draft
-    ZC->>BE: tools/call with _bazaar_ctx injected
+    ZC->>BE: tools/call with identity in _meta
     BE->>DB: store_groups by (channel, chat_ref)
     DB-->>BE: store 1, role staff
     BE->>BE: role matrix check
@@ -92,7 +92,7 @@ Failure paths:
 
 ```mermaid
 flowchart TD
-    A["tool call"] --> B{"_bazaar_ctx present?"}
+    A["tool call"] --> B{"context present?"}
     B -->|no| E1["no_store"]
     B -->|yes| C{"chat bound or account member?"}
     C -->|no| E1
@@ -109,11 +109,11 @@ The model asks for the menu. What reaches the backend:
 
 ```json
 { "name": "get_menu",
-  "arguments": {
-    "event_id": "BAZAR-2026-11-15",
-    "_bazaar_ctx": { "channel": "whatsapp",
-                     "chat_ref": "120363041234567890@g.us",
-                     "sender_ref": "6281234567890@s.whatsapp.net" } } }
+  "arguments": { "event_id": "BAZAR-2026-11-15" },
+  "_meta": { "id.bazaar/context": {
+    "channel": "whatsapp",
+    "chat_ref": "120363041234567890@g.us",
+    "sender_ref": "6281234567890@s.whatsapp.net" } } }
 ```
 
 Resolution:
@@ -156,8 +156,8 @@ Unit, in `db_test` and `mcpserver`.
 | revoked binding | row `revoked` | `no_store` |
 | suspended store | `stores.status = 'suspended'` | `store_suspended` |
 | low role | staff scope on an organizer tool | `role_denied`, handler not called |
-| field missing | call without `_bazaar_ctx` | `no_store`, and a test asserts all 17 tools do it |
-| field malformed | `_bazaar_ctx` not an object | `no_store` |
+| field missing | call without context | `no_store`, and a test asserts every tool refuses |
+| field malformed | context not an object | `no_store` |
 | cross-store event | store 1 scope, event of store 2 | `not_found`, zero rows |
 
 E2E: E2E-A5, E2E-A6, E2E-O17, E2E-A7, E2E-X8, E2E-A9 in

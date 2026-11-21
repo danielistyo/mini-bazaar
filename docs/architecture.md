@@ -20,7 +20,7 @@ flowchart LR
         TG["Telegram (later)"]
     end
 
-    ZC["ZeroClaw<br/>mention gate, passive context,<br/>LLM, injects _bazaar_ctx"]
+    ZC["ZeroClaw<br/>mention gate, passive context,<br/>LLM, injects identity into _meta"]
     BE["bazaar-mcp<br/>resolves scope, role matrix,<br/>WHERE store_id = ?"]
     DB[("SQLite<br/>orders.db")]
 
@@ -50,7 +50,7 @@ flowchart TB
         GATE["mention gate, allowlist,<br/>PM-WA prefix filter"]
         ORCH["orchestrator turn<br/>reply_target, sender, message_id"]
         LLM["LLM"]
-        DISP["tool dispatch<br/>injects _bazaar_ctx"]
+        DISP["tool dispatch<br/>injects identity into _meta"]
         ADW --> GATE
         ADT --> GATE
         GATE --> ORCH
@@ -79,7 +79,7 @@ flowchart TB
 | Concern | Package | Notes |
 |---|---|---|
 | Channel sessions, mention gating, LLM | ZeroClaw (Rust, forked) | fork carries two patches: PM-WA filter, context injection |
-| Tool-call context | `zeroclaw-tools` (`mcp_tool.rs`, `mcp_client.rs`) | `_bazaar_ctx` merged into args |
+| Tool-call context | `zeroclaw-tools` (`mcp_tool.rs`, `mcp_client.rs`) | `_meta` attached to the request |
 | Scope resolution, role matrix | `mcpserver/` | one wrapper around `mcp.AddTool` |
 | Policy, money, drafts | `orders/` | receives a `Scope` |
 | SQL, store predicates | `db/` | every statement takes a store |
@@ -102,7 +102,7 @@ sequenceDiagram
     M->>WA: catat Bu Ratna sate 2
     WA->>ZC: message with chat_ref and sender_ref
     ZC->>ZC: mention gate, then LLM picks create_order_draft
-    ZC->>BE: tools/call with _bazaar_ctx injected
+    ZC->>BE: tools/call with identity in _meta
     BE->>DB: store_groups by (channel, chat_ref)
     DB-->>BE: store 1, role staff
     BE->>DB: INSERT draft WHERE store_id = 1

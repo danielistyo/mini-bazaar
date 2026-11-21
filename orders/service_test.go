@@ -21,6 +21,8 @@ func setup(t *testing.T) (*orders.Service, *db.DB) {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
+	// migration V4 creates KPKM as store 1
+	d = d.ForStore(1)
 
 	ctx := context.Background()
 	if err := d.CreateEvent(ctx, db.Event{
